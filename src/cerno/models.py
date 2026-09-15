@@ -205,6 +205,106 @@ class UsageStats(BaseModel):
     context_avoided_pct: float | None = None
 
 
+MarkerKind = Literal["good", "bad", "deployment", "release", "test_run", "build", "incident"]
+LinkConfidence = Literal["direct_tool_event", "session_attributed", "temporal_only", "unknown"]
+EvidenceKind = Literal["fact", "correlation", "model_inference"]
+
+
+class RepoIdentity(BaseModel):
+    """Stable repo identity: derived from the git remote when present, else a persisted UUID
+    (.cerno/repo_id), so history survives the repo being moved or re-cloned to a new path."""
+
+    repo_id: str
+    path: str
+    remote_url: str | None = None
+    remote_normalized: str | None = None
+    default_branch: str | None = None
+    initial_commit: str | None = None
+    latest_indexed_commit: str | None = None
+    indexed_at: str | None = None
+    history_schema_version: int = 1
+
+
+class CommitFile(BaseModel):
+    path: str
+    old_path: str | None = None
+    change_type: Literal["created", "modified", "deleted", "renamed"]  # matches FileChange.status
+    additions: int
+    deletions: int
+    is_binary: bool = False
+
+
+class CommitRecord(BaseModel):
+    """One indexed commit. `files` diffs against the first parent for merges (see history.first_parent_log)."""
+
+    hash: str
+    parents: list[str] = []
+    author_name: str
+    author_email: str
+    author_date: str
+    committer_date: str
+    subject: str
+    refs: list[str] = []
+    is_merge: bool
+    is_root: bool
+    files: list[CommitFile] = []
+    manifest_changed: bool = False
+    schema_changed: bool = False
+    test_changed: bool = False
+    seq: int = 0  # topo order at index time, oldest = 0
+
+
+class SessionCommitLink(BaseModel):
+    """Answers: was this session's work committed, and how sure are we it was these commits."""
+
+    session_id: str
+    repo_id: str
+    baseline_head: str | None
+    final_head: str | None
+    baseline_tree: str | None
+    final_tree: str | None
+    commits_created: list[str] = []
+    confidence: LinkConfidence
+    basis: str
+
+
+class Marker(BaseModel):
+    """Developer-provided fact (good/bad/deployment/...). Never inferred from commit existence alone."""
+
+    id: str
+    repo_id: str
+    kind: MarkerKind
+    commit: str | None
+    timestamp: str
+    description: str
+    metadata: dict = {}
+
+
+class SuspectFinding(BaseModel):
+    kind: Literal["commit", "file", "symbol", "dependency"]
+    ref: str
+    score: float
+    reason: str
+    evidence: EvidenceKind
+    session_id: str | None = None
+    prompt_id: str | None = None
+    requirement_id: str | None = None
+
+
+class DiagnosisResult(BaseModel):
+    id: str
+    repo_id: str
+    good: str | None
+    bad: str | None
+    query: str | None = None
+    created_at: str
+    candidate_commits: list[str]
+    suspects: list[SuspectFinding]
+    narrative: str
+    model_used: bool
+    bisect_plan: list[str] = []
+
+
 class Session(BaseModel):
     id: str
     repo_root: str

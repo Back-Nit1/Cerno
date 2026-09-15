@@ -136,7 +136,14 @@ uv run --project /path/to/Cerno cerno analyze   # latest session
 | `cerno timeline [session-id] [--json]` | Inspect the structured prompt timeline (no dashboard needed) |
 | `cerno dashboard` | Serve API (+ `ui/dist`) on :8000 |
 | `cerno demo` | Build and analyze the demo repository |
+| `cerno history index` | Incrementally index reachable git history |
+| `cerno history log [--first-parent]` | Show indexed commits |
+| `cerno history path <path>` | Commits touching a path, following renames |
+| `cerno history markers [--add <kind> --commit <ref>]` | Record/list good/bad/deployment/release/incident markers |
+| `cerno diagnose --good/--bad/--query/--file ...` | Rank suspect commits for a production breakage |
 | `cerno hook <event>` | Internal hook entrypoints (stdin JSON, fail-open) |
+
+See [`docs/history.md`](docs/history.md) for the repository-history layer and diagnosis workflow in depth.
 
 ## API
 
@@ -148,6 +155,11 @@ provenance) · `GET /api/sessions/{id}/segments` (per-prompt diff segments) · `
 `GET /api/sessions/{id}/events` · `GET /api/sessions/{id}/usage` · `POST /api/sessions/{id}/analyze` ·
 `GET /api/sessions/{id}/stream` (SSE progress). Response shapes follow `ui/src/types.ts`, with extra fields added.
 `GET /api/sessions/{id}` also embeds `prompt_timeline` for convenience.
+
+Repository history (see `docs/history.md`): `GET /api/history/status` · `GET /api/history/commits` (paginated,
+`?before_seq=&limit=&first_parent=`) · `GET /api/history/commits/{hash}` · `GET /api/history/path?path=` ·
+`GET /api/history/symbol?path=&name=` · `GET /api/history/sessions/{id}[/file?path=]` ·
+`GET/POST /api/history/markers` · `POST /api/history/diagnose` · `GET /api/history/diagnose/{id}`.
 
 ## Configuration
 
@@ -166,12 +178,13 @@ See `.env.example`: `CERNO_MODEL` (default `gpt-5.6-luna`), `CERNO_MAX_TOOL_STEP
 ```text
 src/cerno/  cli.py config.py models.py privacy.py pipeline.py demo.py
             capture/ (hooks, snapshots, timeline, transcript)   intent/compiler.py
-            analysis/ (git, tree_sitter, symbols, graph, retrieval, segments)
-            evidence/store.py   verification/ (context, deterministic, runtime, tools, agent, verdict)
-            llm/openai.py       storage/sqlite.py    api/app.py
+            analysis/ (git, tree_sitter, symbols, graph, retrieval, segments, history)
+            evidence/store.py   verification/ (context, deterministic, runtime, tools, agent, verdict, diagnosis)
+            llm/openai.py       storage/sqlite.py    api/ (app.py, history.py)
 ui/         React + Vite dashboard
 tests/      pytest suite (API mocked for the agent loop)
 examples/demo-auth-app/
+docs/       history.md (repository-history layer + diagnosis workflow)
 ```
 
 ## Development and tests
@@ -188,7 +201,8 @@ npm ci
 npm test
 ```
 
-The Python suite currently contains 40 collected cases across five files:
+The Python suite covers the per-session capture/verification pipeline, revision-aware prompt timelines, and the
+repository-history layer described in `docs/history.md`:
 
 - `tests/test_capture_git.py` checks Git snapshots and diffs, dirty-work attribution, hook event persistence and
   normalization, fail-open handling of invalid hook input, and non-destructive/idempotent hook installation.
@@ -206,10 +220,19 @@ The Python suite currently contains 40 collected cases across five files:
   segment, direct-vs-temporal attribution confidence, backward compatibility with `prompts`-only sessions, superseded
   requirements being excluded from verdict counts, timeline/segments API serialization, and a structural proof that
   hooks never import the OpenAI SDK.
+- `tests/test_history.py` checks git indexing (linear/merge/root commits, renames, deletions, binary files,
+  schema/manifest flags), incremental re-indexing, interrupted-indexing recovery, shallow clones, rewritten/diverged
+  history, session- and prompt-to-commit linkage, developer-only markers, and backward-compatible DB migration.
+- `tests/test_diagnosis.py` checks deterministic suspect ranking without OpenAI, `--good`/`--bad` range narrowing, a
+  fake-OpenAI narrative pass (`FakeClient`, no live API calls), that a model-suggested ref outside the candidate set
+  is dropped rather than trusted, and secret redaction in the evidence packet.
+- `tests/test_history_api.py` checks commit-timeline pagination, commit/path/marker/diagnose endpoints, and 404s.
+- `tests/test_regression_scenario.py` is the realistic example from `docs/history.md`: two sessions, a known-good
+  release, a later regression, and a diagnosis that ranks and links the suspect commit back to its session and prompt.
 
-The UI suite currently contains five Vitest cases in `ui/src/lib/session-view.test.ts`. They check analysis-progress
-stage states, verdict-status counting, and prompt-classification labeling. The shared `demo` pytest fixture invokes
-the demo app's real `node --test` command.
+The UI suite covers analysis-progress stage states, verdict-status counting, prompt-classification labeling, and the
+repository-history dashboard page against a mocked `fetch`. The shared `demo` pytest fixture invokes the demo app's
+real `node --test` command.
 
 Useful additional checks are:
 
@@ -232,6 +255,11 @@ cd ui && npm run lint && npm run build
 - The deterministic (no-`OPENAI_API_KEY`) prompt classifier is a conservative cue-phrase and keyword-overlap
   heuristic. It reports `ambiguous` rather than guessing whenever it isn't confident, which means real
   refinements/corrections can also land as `ambiguous` without a model call to disambiguate them.
+- Repository history is indexed from `HEAD` only (not every branch/tag); incremental indexing after a
+  force-push/rebase that rewrites already-indexed commits may briefly re-walk more than the new tip alone (see
+  `docs/history.md#known-limitations`).
+- Per-commit symbol history re-parses the repository tree for each commit in the query, bounded to the last 20
+  commits touching a path by default — fine for interactive queries, not for scanning whole-history symbol churn.
 
 ## Roadmap
 

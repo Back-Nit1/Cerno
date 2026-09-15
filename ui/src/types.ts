@@ -199,3 +199,113 @@ export interface AnalysisProgressStep {
   label: string;
   state: "done" | "active" | "pending";
 }
+
+// --- Repository history layer ---
+
+export interface RepoIdentity {
+  repo_id: string;
+  path: string;
+  remote_url: string | null;
+  remote_normalized: string | null;
+  default_branch: string | null;
+  initial_commit: string | null;
+  latest_indexed_commit: string | null;
+  indexed_at: string | null;
+}
+
+export interface CommitFile {
+  path: string;
+  old_path: string | null;
+  change_type: ChangeStatus;
+  additions: number;
+  deletions: number;
+  is_binary: boolean;
+}
+
+export interface CommitRecord {
+  hash: string;
+  parents: string[];
+  author_name: string;
+  author_email: string;
+  author_date: string;
+  committer_date: string;
+  subject: string;
+  refs: string[];
+  is_merge: boolean;
+  is_root: boolean;
+  files: CommitFile[];
+  manifest_changed: boolean;
+  schema_changed: boolean;
+  test_changed: boolean;
+  seq: number;
+}
+
+export interface CommitPage {
+  commits: CommitRecord[];
+  next_before_seq: number | null;
+}
+
+export type LinkConfidence = "direct_tool_event" | "session_attributed" | "temporal_only" | "unknown";
+
+export interface SessionCommitLink {
+  session_id: string;
+  repo_id: string;
+  baseline_head: string | null;
+  final_head: string | null;
+  baseline_tree: string | null;
+  final_tree: string | null;
+  commits_created: string[];
+  confidence: LinkConfidence;
+  basis: string;
+}
+
+export type MarkerKind = "good" | "bad" | "deployment" | "release" | "test_run" | "build" | "incident";
+
+export interface Marker {
+  id: string;
+  repo_id: string;
+  kind: MarkerKind;
+  commit: string | null;
+  timestamp: string;
+  description: string;
+  metadata: Record<string, unknown>;
+}
+
+export type EvidenceKind = "fact" | "correlation" | "model_inference";
+
+export interface SuspectFinding {
+  kind: "commit" | "file" | "symbol" | "dependency";
+  ref: string;
+  score: number;
+  reason: string;
+  evidence: EvidenceKind;
+  session_id: string | null;
+  prompt_id: string | null;
+  requirement_id: string | null;
+}
+
+export interface DiagnosisResult {
+  id: string;
+  repo_id: string;
+  good: string | null;
+  bad: string | null;
+  query: string | null;
+  created_at: string;
+  candidate_commits: string[];
+  suspects: SuspectFinding[];
+  narrative: string;
+  model_used: boolean;
+  bisect_plan: string[];
+}
+
+export interface DiagnosisRequest {
+  good?: string;
+  bad?: string;
+  since?: string;
+  until?: string;
+  query?: string;
+  file?: string;
+  symbol?: string;
+  dependency?: string;
+  incident?: string;
+}
