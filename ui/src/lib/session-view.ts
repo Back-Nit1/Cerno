@@ -1,4 +1,17 @@
-import type { AnalysisProgressStep, SessionStatus, Verdict, VerdictStatus } from "@/types";
+import type { AnalysisProgressStep, PromptClassification, SessionStatus, Verdict, VerdictStatus } from "@/types";
+
+const CLASSIFICATION_LABELS: Record<PromptClassification, string> = {
+  new_task: "new task",
+  refinement: "refinement",
+  correction: "correction",
+  replacement: "replacement",
+  continuation: "continuation",
+  ambiguous: "ambiguous",
+};
+
+export function classificationLabel(classification: PromptClassification | null): string {
+  return classification ? CLASSIFICATION_LABELS[classification] : "unclassified";
+}
 
 const STAGES = ["Change analysis", "Evidence retrieval", "Verification agent", "Verdict"];
 

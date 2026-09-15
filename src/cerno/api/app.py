@@ -67,6 +67,30 @@ def create_app(root: Path | None = None) -> FastAPI:
                  "related_requirement_id": (a["affected_requirements"] or [None])[0]}
                 for a in db.list("change_assessments", sid)]
 
+    def timeline(sid: str) -> list[dict]:
+        prompts = sorted(db.list("prompt_timeline", sid), key=lambda p: p["seq"])
+        reqs = db.list("requirements", sid)
+        files_by_prompt: dict[str, set[str]] = {}
+        for a in db.list("attributions", sid):
+            if a["prompt_id"]:
+                files_by_prompt.setdefault(a["prompt_id"], set()).add(a["path"])
+        symbols_by_prompt: dict[str, set[str]] = {}
+        for seg in db.list("diff_segments", sid):
+            if seg["prompt_id"]:
+                symbols_by_prompt.setdefault(seg["prompt_id"], set()).update(
+                    f"{s['file_path']}::{s['symbol_name']}" for s in seg["symbols"])
+        out = []
+        for p in prompts:
+            out.append({
+                **p,
+                "files_changed": sorted(files_by_prompt.get(p["id"], ())),
+                "symbols_changed": sorted(symbols_by_prompt.get(p["id"], ())),
+                "requirements_introduced": [r["id"] for r in reqs if r.get("origin_prompt_id") == p["id"]],
+                "requirements_refined": [r["id"] for r in reqs if p["id"] in (r.get("refined_by") or [])],
+                "requirements_superseded": [r["id"] for r in reqs if r.get("superseded_by") == p["id"]],
+            })
+        return out
+
     @app.get("/api/health")
     def health():
         return {"status": "ok", "repository_root": str(root), "model": settings.model,
@@ -91,6 +115,7 @@ def create_app(root: Path | None = None) -> FastAPI:
             "intent": contract, "verdicts": db.list("verdicts", sid), "file_changes": db.list("file_changes", sid),
             "symbol_changes": db.list("symbol_changes", sid), "unexpected_changes": unexpected(sid),
             "project_checks": checks(sid), "agent_claims": db.list("agent_claims", sid), "usage": usage(sid),
+            "prompt_timeline": timeline(sid),
         }
 
     @app.get("/api/sessions/{sid}/requirements")
@@ -108,6 +133,16 @@ def create_app(root: Path | None = None) -> FastAPI:
         ids = set(verdict["evidence_ids"]) | {i for st in verdict.get("trace", []) for i in st["evidence_ids"]} if verdict else set()
         evidence = [e for e in db.list("evidence", sid) if e["id"] in ids]
         return {"requirement": req, "verdict": verdict, "evidence": evidence}
+
+    @app.get("/api/sessions/{sid}/timeline")
+    def timeline_endpoint(sid: str):
+        session(sid)
+        return timeline(sid)
+
+    @app.get("/api/sessions/{sid}/segments")
+    def segments_endpoint(sid: str):
+        session(sid)
+        return db.list("diff_segments", sid)
 
     @app.get("/api/sessions/{sid}/changes")
     def changes(sid: str):

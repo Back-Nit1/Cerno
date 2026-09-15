@@ -12,7 +12,7 @@ from pathlib import Path
 from cerno.analysis import git
 from cerno.capture.snapshots import now, take_snapshot
 from cerno.config import Settings, cerno_dir, db_file, session_dir
-from cerno.models import HookEvent, Session
+from cerno.models import HookEvent, PromptRecord, Session
 from cerno.storage.sqlite import DB
 
 HOOK_EVENTS = {
@@ -82,8 +82,20 @@ def handle_hook(hook: str, payload: dict, cwd: Path | None = None) -> HookEvent 
         prompt = str(payload.get("prompt") or "")
         if _meaningful(prompt):
             session.prompts.append(prompt)
-            if is_git and not (sdir / "baseline.json").exists():
-                take_snapshot(root, session_id, "baseline")
+            if is_git:
+                # The initial baseline is captured once, at the same moment as the first prompt's
+                # checkpoint, so the "baseline -> prompt 1" segment is empty by construction.
+                if not (sdir / "baseline.json").exists():
+                    take_snapshot(root, session_id, "baseline")
+                seq = db.count("prompt_timeline", session_id) + 1
+                prompt_record_id = f"{session_id}-P{seq}"
+                checkpoint = take_snapshot(root, session_id, "prompt", label=f"prompt-{seq}",
+                                           prompt_id=prompt_record_id)
+                record = PromptRecord(
+                    id=prompt_record_id, session_id=session_id, seq=seq, timestamp=now(), text=prompt,
+                    head=checkpoint.head, tree=checkpoint.tree,
+                )
+                db.put("prompt_timeline", session_id, record.id, record, seq=seq)
     elif event_name in {"Stop", "StopFailure"}:
         if is_git:
             take_snapshot(root, session_id, "final")

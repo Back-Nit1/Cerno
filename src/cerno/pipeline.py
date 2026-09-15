@@ -7,12 +7,14 @@ from pathlib import Path
 from cerno.analysis import git
 from cerno.analysis.graph import RepoIndex
 from cerno.analysis.retrieval import RISKY, build_packet, keywords, overlap, rank, split_identifier
+from cerno.analysis.segments import attribute_changes, build_segments
 from cerno.analysis.symbols import changed_symbols
 from cerno.capture.snapshots import load_snapshot, now
+from cerno.capture.timeline import load_prompt_timeline
 from cerno.capture.transcript import extract_claims, final_assistant_text
 from cerno.config import Settings, db_file
 from cerno.evidence.store import EvidenceStore
-from cerno.intent.compiler import compile_intent
+from cerno.intent.compiler import compile_intent_timeline
 from cerno.llm.openai import LLM
 from cerno.models import AgentClaim, ChangeAssessment, HookEvent, Session, UsageStats, Verdict
 from cerno.storage.sqlite import DB
@@ -23,7 +25,8 @@ from cerno.verification.runtime import detect_checks
 from cerno.verification.verdict import finalize, uncertain
 
 RESULT_TABLES = ["requirements", "file_changes", "symbol_changes", "evidence", "project_checks", "verdicts",
-                 "agent_claims", "change_assessments", "model_usage"]
+                 "agent_claims", "change_assessments", "model_usage", "prompt_timeline", "diff_segments",
+                 "attributions"]
 GUARD_TYPES = {"invariant", "prohibition"}
 
 
@@ -52,12 +55,14 @@ def analyze(root: Path, session_id: str, settings: Settings | None = None, llm: 
 
     session.status, session.progress, session.error = "analyzing", [], None
     try:
+        raw_prompts = load_prompt_timeline(session_id, session, db)  # read before RESULT_TABLES is cleared
         for table in RESULT_TABLES:
             db.clear(table, session_id)
         llm = llm or LLM(settings, db, session_id)
 
         step("Compiling intent contract")
-        contract, source = compile_intent(llm, session.prompts, db)
+        contract, prompts, source = compile_intent_timeline(llm, raw_prompts, db)
+        db.put_many("prompt_timeline", session_id, [(p.id, p) for p in prompts])
         db.put_many("requirements", session_id, [(r.id, r) for r in contract.requirements])
         db.put("sessions", session_id, "__contract__", contract)  # full contract incl. protected areas
 
@@ -66,12 +71,21 @@ def analyze(root: Path, session_id: str, settings: Settings | None = None, llm: 
         db.put_many("file_changes", session_id, [(c.path, c) for c in ctx.changes])
         db.put_many("symbol_changes", session_id, [(f"{s.file_path}::{s.symbol_name}", s) for s in ctx.symbol_changes])
 
+        step("Attributing changes to prompt segments")
+        segments = build_segments(root, session_id, prompts, db)
+        db.put_many("diff_segments", session_id, [(s.id, s) for s in segments])
+        attributions = attribute_changes(segments, ctx.events)
+        db.put_many("attributions", session_id, [(a.path, a) for a in attributions])
+        ctx.segments, ctx.attributions = segments, {a.path: a for a in attributions}
+
         step("Running allowlisted project checks")
         for kind in detect_checks(root):
             ctx.check(kind)
 
         verdicts: list[Verdict] = []
         for req in contract.requirements:
+            if not req.active:  # superseded requirements stay visible but never receive a verdict
+                continue
             step(f"Verifying {req.id}: {req.text[:70]}")
             verdicts.append(verify_requirement(llm, ctx, req))
             db.put("verdicts", session_id, req.id, verdicts[-1], seq=len(verdicts))
@@ -127,7 +141,7 @@ def verify_requirement(llm: LLM, ctx: Context, req) -> Verdict:
 
 
 def assess_changes(ctx: Context, verdicts: list[Verdict]) -> list[ChangeAssessment]:
-    reqs = ctx.contract.requirements
+    reqs = [r for r in ctx.contract.requirements if r.active]  # superseded requirements carry no live verdict
     guards = [r for r in reqs if r.type in GUARD_TYPES]
     goals = [r for r in reqs if r.type not in GUARD_TYPES]
     violated = [v for v in verdicts if v.status == "VIOLATED"]
@@ -193,7 +207,7 @@ def check_claims(ctx: Context, transcript_path: str | None, verdicts: list[Verdi
     text = final_assistant_text(transcript_path)
     if not text:
         return []
-    guards = {r.id for r in ctx.contract.requirements if r.type in GUARD_TYPES}
+    guards = {r.id for r in ctx.contract.requirements if r.type in GUARD_TYPES and r.active}
     claims = []
     for n, (category, sentence) in enumerate(extract_claims(text), start=1):
         result, ids, summary = "UNVERIFIABLE", [], "No evidence in this analysis addresses the claim."

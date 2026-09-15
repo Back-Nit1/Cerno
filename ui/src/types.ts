@@ -20,6 +20,11 @@ export interface Requirement {
   priority: Priority;
   explicit: boolean;
   verification_hint: string | null;
+  origin_prompt_id: string | null;
+  refined_by: string[];
+  superseded_by: string | null;
+  active: boolean;
+  segment_ids: string[];
 }
 
 export interface IntentContract {
@@ -27,6 +32,44 @@ export interface IntentContract {
   requirements: Requirement[];
   protected_areas: string[];
   explicit_acceptance_criteria: string[];
+  ambiguities: string[];
+}
+
+export type PromptClassification =
+  | "new_task"
+  | "refinement"
+  | "correction"
+  | "replacement"
+  | "continuation"
+  | "ambiguous";
+
+export interface PromptTimelineEntry {
+  id: string;
+  session_id: string;
+  seq: number;
+  timestamp: string;
+  text: string;
+  head: string | null;
+  tree: string | null;
+  classification: PromptClassification | null;
+  refines: string[];
+  supersedes: string[];
+  confidence: number | null;
+  ambiguous: boolean;
+  files_changed: string[];
+  symbols_changed: string[];
+  requirements_introduced: string[];
+  requirements_refined: string[];
+  requirements_superseded: string[];
+}
+
+export interface DiffSegmentSummary {
+  id: string;
+  from_label: string;
+  to_label: string;
+  prompt_id: string | null;
+  files: FileChange[];
+  symbols: SymbolChange[];
 }
 
 export type ChangeStatus = "created" | "modified" | "deleted" | "renamed";
@@ -149,6 +192,7 @@ export interface SessionDetail {
   project_checks: ProjectCheck[];
   agent_claims: AgentClaim[];
   usage: UsageMetrics;
+  prompt_timeline: PromptTimelineEntry[];
 }
 
 export interface AnalysisProgressStep {

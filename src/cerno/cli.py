@@ -137,6 +137,51 @@ def analyze(session_id: str | None = typer.Argument(None), repo: Path | None = R
 
 
 @app.command()
+def timeline(session_id: str | None = typer.Argument(None), repo: Path | None = REPO,
+            as_json: bool = typer.Option(False, "--json", help="Print the timeline as JSON.")):
+    """Show the structured prompt timeline for a session, without starting the dashboard.
+
+    Works before `cerno analyze` too (classification/requirements show as pending)."""
+    from cerno.capture.timeline import load_prompt_timeline
+    from cerno.models import Session
+    from cerno.pipeline import latest_session_id
+
+    root = _root(repo)
+    db = _db(root)
+    session_id = session_id or latest_session_id(db)
+    if session_id is None:
+        typer.secho("No sessions found.", fg="red")
+        raise typer.Exit(1)
+    stored = db.get("sessions", session_id, session_id)
+    if stored is None:
+        typer.secho(f"unknown session {session_id}", fg="red")
+        raise typer.Exit(1)
+    session = Session.model_validate(stored)
+    prompts = load_prompt_timeline(session_id, session, db)
+    reqs = db.list("requirements", session_id)
+    if as_json:
+        typer.echo(json.dumps([p.model_dump() for p in prompts], indent=2))
+        return
+    for p in prompts:
+        cls = p.classification or "unclassified (run `cerno analyze`)"
+        typer.echo(f"P{p.seq:<3} {p.timestamp}  {cls:<28} {p.text[:70]!r}")
+        typer.echo(f"     checkpoint head={(p.head or '-')[:12]} tree={(p.tree or '-')[:12]}"
+                   + (f" confidence={p.confidence:.2f}" if p.confidence is not None else ""))
+        if p.refines:
+            typer.echo(f"     refines:    {', '.join(p.refines)}")
+        if p.supersedes:
+            typer.echo(f"     supersedes: {', '.join(p.supersedes)}")
+        introduced = [r["id"] for r in reqs if r.get("origin_prompt_id") == p.id]
+        superseded = [r["id"] for r in reqs if r.get("superseded_by") == p.id]
+        if introduced:
+            typer.echo(f"     requirements introduced: {', '.join(introduced)}")
+        if superseded:
+            typer.echo(f"     requirements superseded: {', '.join(superseded)}")
+        if p.ambiguous:
+            typer.secho("     ! ambiguous relationship to earlier prompts - needs developer review", fg="yellow")
+
+
+@app.command()
 def dashboard(repo: Path | None = REPO, host: str = "127.0.0.1", port: int = 8000):
     """Serve the API (and the built UI from ui/dist if present)."""
     import uvicorn

@@ -7,7 +7,16 @@ from cerno.analysis import git
 from cerno.analysis.graph import RepoIndex
 from cerno.config import Settings
 from cerno.evidence.store import EvidenceStore
-from cerno.models import CheckResult, FileChange, HookEvent, IntentContract, Requirement, SymbolChange
+from cerno.models import (
+    ChangeAttribution,
+    CheckResult,
+    DiffSegment,
+    FileChange,
+    HookEvent,
+    IntentContract,
+    Requirement,
+    SymbolChange,
+)
 from cerno.privacy import is_excluded, redact
 from cerno.storage.sqlite import DB
 from cerno.verification.runtime import run_check
@@ -35,6 +44,8 @@ class Context:
     extra_expansion_used: bool = False
     lines_sent: int = 0
     tool_calls: int = 0
+    segments: list[DiffSegment] = field(default_factory=list)
+    attributions: dict[str, ChangeAttribution] = field(default_factory=dict)
     _diffs: dict[str, str] = field(default_factory=dict)
 
     def requirement(self, requirement_id: str) -> Requirement | None:
