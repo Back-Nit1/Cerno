@@ -12,27 +12,32 @@ every requirement.
 ## How it works
 
 ```text
-Claude Code hooks ──> Capture (prompts, tool events, baseline/final git tree snapshots)
+Claude Code hooks ──> Capture (prompts, tool events; a git checkpoint per prompt + baseline/final)
                         │
                         ▼
-                 Intent Compiler (OpenAI, strict schema) ─> Intent Contract (R1..Rn)
+       Revision-aware Intent Compiler (OpenAI, strict schema, at `cerno analyze` — never in hooks)
+       classifies each prompt (new_task/refinement/correction/replacement/continuation/ambiguous)
+       and threads requirement provenance ─> Intent Contract (R1..Rn, active + superseded)
                         │
         ┌───────────────┴────────────────┐
         ▼                                ▼
  Change Analyzer                   Runtime Observer
  git trees + Tree-sitter           allowlisted test/build/lint/typecheck
  symbols + impact graph                  │
+ + per-prompt diff segments              │
         └───────────────┬────────────────┘
                         ▼
       Deterministic rules ──(settled)──────────────┐
                         │ (not settled)            │
                         ▼                          │
       Evidence retrieval: rank + compact packet    │
+      (biased toward the requirement's originating  │
+      prompt segment, then the rest of the session) │
                         ▼                          │
       Verification agent (OpenAI, read-only tools, │
       bounded steps, cites evidence ids)           │
                         ▼                          ▼
-      Verdict rules (VERIFIED needs test/runtime/rule evidence)
+      Verdict rules (VERIFIED needs test/runtime/rule evidence; only active requirements get one)
                         ▼
       Drift analysis · claim checks · usage ──> SQLite ──> FastAPI ──> React dashboard
 ```
@@ -40,6 +45,66 @@ Claude Code hooks ──> Capture (prompts, tool events, baseline/final git tree
 Verdicts: **VERIFIED** (test, runtime, or deterministic proof), **LIKELY** (strong code evidence, no proof),
 **UNCERTAIN** (missing or conflicting evidence, or budget spent), **VIOLATED** (evidence contradicts it).
 A model's opinion alone can never produce VERIFIED; that rule is enforced in code.
+
+### Multi-prompt sessions: revision-aware tracking
+
+A Claude Code session is rarely one prompt. Developers refine, correct, replace, and continue their own
+requests, and Cerno needs to tell those apart instead of joining every prompt into one flat blob of intent.
+
+Every meaningful `UserPromptSubmit` event is captured as a structured **prompt record** (stable id, session
+id, sequence number, timestamp, text, and a **git checkpoint**: the HEAD commit and worktree tree id at the
+moment the prompt was submitted, captured *before* Claude acts on it). Capturing the checkpoint is a git
+plumbing operation (`git write-tree` against a scratch index) — no model call, so hooks stay fast and never
+touch the network.
+
+At `cerno analyze` time — never in a hook — the **Intent Compiler** reads the ordered prompt timeline and
+classifies each prompt's relationship to the ones before it:
+
+| Classification | Meaning |
+| --- | --- |
+| `new_task` | Starts an unrelated requirement |
+| `refinement` | Adds detail to an earlier requirement without contradicting it |
+| `correction` | Explicitly contradicts or withdraws part of an earlier requirement |
+| `replacement` | Discards an earlier task and starts over |
+| `continuation` | Keeps working on the same task, no new requirement |
+| `ambiguous` | The relationship can't be determined without guessing — flagged for developer review |
+
+For example:
+
+> **P1:** "Use JWT reset tokens."
+> **P2:** "Actually, do not use JWT. Store opaque reset tokens in the database instead."
+
+P2 is classified `correction`. The JWT requirement stays in the contract for history, marked
+`active: false`, `superseded_by: P2` — it is visible in the dashboard and CLI but never receives a verdict
+and is excluded from verdict counts. The opaque-token requirement is `active: true`, `origin_prompt_id: P2`.
+
+> **P1:** "Add password reset."
+> **P2:** "Also make reset tokens expire after 30 minutes."
+
+P2 is classified `refinement`. Both requirements stay active; the expiry requirement records P2 as its
+origin. Cerno never silently reconciles a genuine conflict — anything it can't classify with a clear signal
+(a cue phrase like "actually"/"instead", or requirement keyword overlap) is reported `ambiguous` with a low
+confidence score and a note in `ambiguities`, not guessed.
+
+Without `OPENAI_API_KEY`, the same classification runs through a deterministic, conservative fallback
+(cue-phrase + keyword-overlap heuristics) and is labeled `fallback` — same behavior, no model call.
+
+**Diff segments and attribution.** Cerno reuses the same git tree snapshots hooks already capture (no
+repository duplication) to slice a session into segments: `baseline -> P1`, `P1 -> P2`, ..., `P(last) ->
+final`. Each changed file and symbol is mapped to the prompt whose segment it changed in — this is
+**temporal attribution**: correlation in time, not proof that the prompt *caused* the change. When a
+Claude Code tool event (`PostToolUse`) is recorded on the same path, the attribution is upgraded to
+`"direct"` evidence instead of `"temporal"`. The dashboard and API always report which kind it is.
+
+Sessions captured before this feature (`Session.prompts: list[str]` only, no per-prompt checkpoints) still
+analyze correctly: the timeline is synthesized on the fly as one unclassified, checkpoint-less prompt per
+entry.
+
+Inspect the timeline without starting the dashboard:
+
+```bash
+uv run cerno timeline [session-id] [--json]
+```
 
 ## Quick start
 
@@ -68,6 +133,7 @@ uv run --project /path/to/Cerno cerno analyze   # latest session
 | `cerno doctor` | Check git, hooks, key, Tree-sitter, DB, detected checks |
 | `cerno status` | List captured sessions |
 | `cerno analyze [session-id] [--json]` | Run verification |
+| `cerno timeline [session-id] [--json]` | Inspect the structured prompt timeline (no dashboard needed) |
 | `cerno dashboard` | Serve API (+ `ui/dist`) on :8000 |
 | `cerno demo` | Build and analyze the demo repository |
 | `cerno hook <event>` | Internal hook entrypoints (stdin JSON, fail-open) |
@@ -75,10 +141,13 @@ uv run --project /path/to/Cerno cerno analyze   # latest session
 ## API
 
 `GET /api/health` · `GET /api/sessions` · `GET /api/sessions/{id}` · `GET /api/sessions/{id}/requirements` ·
-`GET /api/sessions/{id}/requirements/{rid}` (trace + evidence) · `GET /api/sessions/{id}/changes` ·
+`GET /api/sessions/{id}/requirements/{rid}` (trace + evidence) · `GET /api/sessions/{id}/timeline` (prompt
+records, classification, refines/supersedes, checkpoints, files/symbols changed afterward, requirement
+provenance) · `GET /api/sessions/{id}/segments` (per-prompt diff segments) · `GET /api/sessions/{id}/changes` ·
 `GET /api/sessions/{id}/evidence[/{eid}]` · `GET /api/sessions/{id}/checks` · `GET /api/sessions/{id}/claims` ·
 `GET /api/sessions/{id}/events` · `GET /api/sessions/{id}/usage` · `POST /api/sessions/{id}/analyze` ·
 `GET /api/sessions/{id}/stream` (SSE progress). Response shapes follow `ui/src/types.ts`, with extra fields added.
+`GET /api/sessions/{id}` also embeds `prompt_timeline` for convenience.
 
 ## Configuration
 
@@ -96,8 +165,8 @@ See `.env.example`: `CERNO_MODEL` (default `gpt-5.6-luna`), `CERNO_MAX_TOOL_STEP
 
 ```text
 src/cerno/  cli.py config.py models.py privacy.py pipeline.py demo.py
-            capture/ (hooks, snapshots, transcript)   intent/compiler.py
-            analysis/ (git, tree_sitter, symbols, graph, retrieval)
+            capture/ (hooks, snapshots, timeline, transcript)   intent/compiler.py
+            analysis/ (git, tree_sitter, symbols, graph, retrieval, segments)
             evidence/store.py   verification/ (context, deterministic, runtime, tools, agent, verdict)
             llm/openai.py       storage/sqlite.py    api/app.py
 ui/         React + Vite dashboard
@@ -119,7 +188,7 @@ npm ci
 npm test
 ```
 
-The Python suite currently contains 24 collected cases across four files:
+The Python suite currently contains 40 collected cases across five files:
 
 - `tests/test_capture_git.py` checks Git snapshots and diffs, dirty-work attribution, hook event persistence and
   normalization, fail-open handling of invalid hook input, and non-destructive/idempotent hook installation.
@@ -131,10 +200,16 @@ The Python suite currently contains 24 collected cases across four files:
   verification-agent tool loop and cache, budget/malformed-output fallbacks, the rule preventing opinion-only
   `VERIFIED` verdicts, and the FastAPI response contract. OpenAI calls are scripted with `FakeClient`, so the suite does
   not require an API key.
+- `tests/test_prompt_timeline.py` checks revision-aware, multi-prompt classification (refinement, correction,
+  replacement, continuation, unrelated new_task, and ambiguous-without-OpenAI, both deterministic and via a scripted
+  model response), git checkpoints surviving commits and dirty state between prompts, file/symbol attribution by
+  segment, direct-vs-temporal attribution confidence, backward compatibility with `prompts`-only sessions, superseded
+  requirements being excluded from verdict counts, timeline/segments API serialization, and a structural proof that
+  hooks never import the OpenAI SDK.
 
-The UI suite currently contains three Vitest cases in `ui/src/lib/session-view.test.ts`. They check analysis-progress
-stage states and verdict-status counting. The shared `demo` pytest fixture invokes the demo app's real `node --test`
-command.
+The UI suite currently contains five Vitest cases in `ui/src/lib/session-view.test.ts`. They check analysis-progress
+stage states, verdict-status counting, and prompt-classification labeling. The shared `demo` pytest fixture invokes
+the demo app's real `node --test` command.
 
 Useful additional checks are:
 
@@ -149,6 +224,14 @@ cd ui && npm run lint && npm run build
 - The whole test suite runs; per-target test selection is not derived.
 - Checks run on the working tree at analysis time.
 - JavaScript/TypeScript and Python only.
+- **Prompt-segment attribution is temporal, not causal.** A file changing between prompt N's checkpoint and
+  prompt N+1's is evidence that it was likely a response to prompt N, not proof — a developer editing files
+  by hand between prompts, or Claude batching unrelated work, looks the same in the git tree. A matching
+  `PostToolUse` hook event on the same path upgrades the attribution from `"temporal"` to `"direct"`, but
+  even direct evidence only shows Claude touched the file, not why. Treat both as investigative leads.
+- The deterministic (no-`OPENAI_API_KEY`) prompt classifier is a conservative cue-phrase and keyword-overlap
+  heuristic. It reports `ambiguous` rather than guessing whenever it isn't confident, which means real
+  refinements/corrections can also land as `ambiguous` without a model call to disambiguate them.
 
 ## Roadmap
 
