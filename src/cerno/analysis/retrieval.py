@@ -15,7 +15,7 @@ STOPWORDS = set(
 )
 RISKY = re.compile(r"(auth|session|login|password|token|security|payment|billing|config|schema|migration|permission)", re.I)
 # Transparent, configurable weights. Scores rank candidates; they are not probabilities.
-WEIGHTS = {"changed": 3.0, "keyword": 1.5, "graph": 2.0, "test": 1.5, "event": 0.5, "risk": 1.0}
+WEIGHTS = {"changed": 1.5, "keyword": 2.0, "graph": 2.0, "test": 1.5, "event": 0.5, "risk": 1.0}
 MAX_CANDIDATES = 12
 MAX_PACKET_DIFF_LINES = 40
 
@@ -61,8 +61,9 @@ def rank(req: Requirement, ctx: Context) -> list[Candidate]:
         changed_symbol_files.add(sc.file_path)
         tokens = split_identifier(sc.symbol_name) | split_identifier(sc.file_path)
         bump(sid, Candidate(sid, sc.file_path), WEIGHTS["changed"], f"{sc.change_type} in diff")
-        if hits := overlap(kw, tokens):
-            bump(sid, found[sid], WEIGHTS["keyword"] * len(hits), f"keywords: {', '.join(sorted(hits))}")
+        parent_hits = overlap(kw, tokens)
+        if parent_hits:
+            bump(sid, found[sid], WEIGHTS["keyword"] * len(parent_hits), f"keywords: {', '.join(sorted(parent_hits))}")
         if RISKY.search(sc.file_path) or RISKY.search(sc.symbol_name):
             bump(sid, found[sid], WEIGHTS["risk"], "risky area")
         if sc.file_path in event_paths:
@@ -74,7 +75,9 @@ def rank(req: Requirement, ctx: Context) -> list[Candidate]:
                 if dist == 0 or is_excluded(ctx.root, neighbor.split("::", 1)[0]):
                     continue
                 npath = neighbor.split("::", 1)[0]
-                amount = WEIGHTS["graph"] / (1 + dist) + (WEIGHTS["test"] if git.is_test(npath) else 0)
+                # Callers inherit a decayed share of the changed symbol's relevance.
+                amount = (WEIGHTS["graph"] + WEIGHTS["keyword"] * len(parent_hits)) / (1 + dist)
+                amount += WEIGHTS["test"] if git.is_test(npath) else 0
                 if hits := overlap(kw, split_identifier(neighbor)):
                     amount += WEIGHTS["keyword"] * len(hits)
                 cand = found.get(neighbor) or Candidate(neighbor, npath, distance=dist)

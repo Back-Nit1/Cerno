@@ -55,9 +55,6 @@ def analyze(root: Path, session_id: str, settings: Settings | None = None, llm: 
         for table in RESULT_TABLES:
             db.clear(table, session_id)
         llm = llm or LLM(settings, db, session_id)
-        baseline, final = load_snapshot(root, session_id, "baseline"), load_snapshot(root, session_id, "final")
-        base_tree = baseline.tree if baseline and baseline.tree else git.head_tree(root)
-        final_tree = final.tree if final and final.tree else git.snapshot_tree(root)
 
         step("Compiling intent contract")
         contract, source = compile_intent(llm, session.prompts, db)
@@ -65,17 +62,9 @@ def analyze(root: Path, session_id: str, settings: Settings | None = None, llm: 
         db.put("sessions", session_id, "__contract__", contract)  # full contract incl. protected areas
 
         step("Locating changed files and symbols")
-        changes = git.get_changed_files(root, base_tree, final_tree)
-        base_index = RepoIndex.from_tree(root, base_tree, db)
-        final_index = RepoIndex.from_tree(root, final_tree, db)
-        symbols = changed_symbols(changes, base_index, final_index)
-        db.put_many("file_changes", session_id, [(c.path, c) for c in changes])
-        db.put_many("symbol_changes", session_id, [(f"{s.file_path}::{s.symbol_name}", s) for s in symbols])
-
-        events = [HookEvent.model_validate(e) for e in db.list("events", session_id)]
-        store = EvidenceStore(db, session_id)
-        ctx = Context(root, session_id, settings, db, store, base_tree, final_tree, changes, symbols, base_index,
-                      final_index, events, contract)
+        ctx = build_context(root, session_id, settings, db, contract)
+        db.put_many("file_changes", session_id, [(c.path, c) for c in ctx.changes])
+        db.put_many("symbol_changes", session_id, [(f"{s.file_path}::{s.symbol_name}", s) for s in ctx.symbol_changes])
 
         step("Running allowlisted project checks")
         for kind in detect_checks(root):
@@ -107,6 +96,20 @@ def analyze(root: Path, session_id: str, settings: Settings | None = None, llm: 
         session.updated_at = now()
         db.put("sessions", session_id, session_id, session)
     return session
+
+
+def build_context(root: Path, session_id: str, settings: Settings, db: DB, contract) -> Context:
+    """Baseline vs final attribution. Missing snapshots fall back to HEAD / current tree."""
+    baseline, final = load_snapshot(root, session_id, "baseline"), load_snapshot(root, session_id, "final")
+    base_tree = baseline.tree if baseline and baseline.tree else git.head_tree(root)
+    final_tree = final.tree if final and final.tree else git.snapshot_tree(root)
+    changes = git.get_changed_files(root, base_tree, final_tree)
+    base_index = RepoIndex.from_tree(root, base_tree, db)
+    final_index = RepoIndex.from_tree(root, final_tree, db)
+    symbols = changed_symbols(changes, base_index, final_index)
+    events = [HookEvent.model_validate(e) for e in db.list("events", session_id)]
+    return Context(root, session_id, settings, db, EvidenceStore(db, session_id), base_tree, final_tree, changes,
+                   symbols, base_index, final_index, events, contract)
 
 
 def verify_requirement(llm: LLM, ctx: Context, req) -> Verdict:
