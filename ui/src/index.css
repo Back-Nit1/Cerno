@@ -1,53 +1,76 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: 220 18% 8%;
-  --foreground: 210 15% 86%;
-  --surface: 220 16% 12%;
-  --border: 220 14% 20%;
-  --muted-foreground: 218 10% 58%;
-  --heading: 210 20% 96%;
-
-  --accent: 174 62% 62%;
-  --accent-foreground: 220 18% 8%;
-
-  --verified: 152 55% 52%;
-  --likely: 210 80% 66%;
-  --uncertain: 42 90% 58%;
-  --violated: 0 72% 62%;
-
+  --background: oklch(0.16 0.008 250);
+  --foreground: oklch(0.89 0.006 250);
+  --card: oklch(0.19 0.008 250);
+  --card-foreground: oklch(0.89 0.006 250);
+  --popover: oklch(0.19 0.008 250);
+  --popover-foreground: oklch(0.89 0.006 250);
+  --primary: oklch(0.78 0.1 185);
+  --primary-foreground: oklch(0.16 0.008 250);
+  --secondary: oklch(0.25 0.01 250);
+  --secondary-foreground: oklch(0.89 0.006 250);
+  --muted: oklch(0.23 0.01 250);
+  --muted-foreground: oklch(0.62 0.012 250);
+  --accent: oklch(0.78 0.1 185);
+  --accent-foreground: oklch(0.16 0.008 250);
+  --destructive: oklch(0.65 0.18 25);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.78 0.1 185 / 50%);
   --radius: 0.5rem;
+
+  /* verdict semantics — not decorative, these are Cerno's actual status vocabulary */
+  --verified: oklch(0.72 0.15 155);
+  --likely: oklch(0.72 0.12 235);
+  --uncertain: oklch(0.78 0.15 85);
+  --violated: oklch(0.68 0.19 25);
+
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 @theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-surface: hsl(var(--surface));
-  --color-border: hsl(var(--border));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-heading: hsl(var(--heading));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-verified: hsl(var(--verified));
-  --color-likely: hsl(var(--likely));
-  --color-uncertain: hsl(var(--uncertain));
-  --color-violated: hsl(var(--violated));
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-verified: var(--verified);
+  --color-likely: var(--likely);
+  --color-uncertain: var(--uncertain);
+  --color-violated: var(--violated);
+  --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.4);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 }
 
-body {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-}
-
-.font-mono,
-code,
-pre {
-  font-family: var(--font-mono);
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
 }
