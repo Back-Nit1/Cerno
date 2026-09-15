@@ -228,7 +228,7 @@ class RepoIdentity(BaseModel):
 class CommitFile(BaseModel):
     path: str
     old_path: str | None = None
-    change_type: Literal["added", "modified", "deleted", "renamed"]
+    change_type: Literal["created", "modified", "deleted", "renamed"]  # matches FileChange.status
     additions: int
     deletions: int
     is_binary: bool = False

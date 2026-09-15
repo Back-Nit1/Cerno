@@ -12,7 +12,9 @@ from cerno.config import Settings, db_file
 
 app = typer.Typer(no_args_is_help=True, help="Cerno: evidence-backed verification for Claude Code.")
 hook_app = typer.Typer(help="Internal Claude Code hook entrypoints (read JSON from stdin).")
+history_app = typer.Typer(help="Repository history: commits, file/symbol history, markers.")
 app.add_typer(hook_app, name="hook")
+app.add_typer(history_app, name="history")
 REPO = typer.Option(None, "--repo", help="Repository root (defaults to the current git repository).")
 MARK = {"VERIFIED": "✓", "LIKELY": "~", "UNCERTAIN": "?", "VIOLATED": "✕"}
 
@@ -157,6 +159,107 @@ def demo(target: Path = typer.Option(Path.home() / ".cerno-demo", help="Where to
     if run_analysis:
         analyze(session_id, target, False)
     typer.echo(f"\nDashboard: cerno dashboard --repo {target}")
+
+
+@history_app.command("index")
+def history_index(repo: Path | None = REPO,
+                  limit: int = typer.Option(2000, help="Max new commits to index this run.")):
+    """Incrementally index reachable git history (restartable; safe to re-run)."""
+    from cerno.analysis import history as hist
+
+    root = _root(repo)
+    db = _db(root)
+    identity = hist.index(root, db, limit=limit,
+                          on_progress=lambda i, n: typer.echo(f"  indexed {i}/{n}", err=True))
+    typer.echo(f"repo_id:          {identity.repo_id}")
+    typer.echo(f"initial commit:   {identity.initial_commit}")
+    typer.echo(f"latest indexed:   {identity.latest_indexed_commit}")
+    typer.echo(f"indexed at:       {identity.indexed_at}")
+
+
+@history_app.command("log")
+def history_log(repo: Path | None = REPO, limit: int = 30,
+                first_parent: bool = typer.Option(True, help="Chronological product-history view.")):
+    """Show indexed commit history."""
+    from cerno.analysis import history as hist
+
+    root = _root(repo)
+    db = _db(root)
+    repo_id = hist.repo_id_for(root)
+    commits = hist.first_parent_log(db, repo_id, limit=limit) if first_parent else hist.log(db, repo_id, limit=limit)
+    for c in commits:
+        merge = "M " if c.is_merge else "  "
+        typer.echo(f"{c.hash[:10]} {merge}{c.author_date[:10]} {c.subject[:70]:<70} "
+                   f"+{sum(f.additions for f in c.files)}/-{sum(f.deletions for f in c.files)}")
+
+
+@history_app.command("path")
+def history_path(path: str, repo: Path | None = REPO):
+    """Show every indexed commit that touched `path` (follows renames)."""
+    from cerno.analysis import history as hist
+
+    root = _root(repo)
+    db = _db(root)
+    repo_id = hist.repo_id_for(root)
+    commits = hist.path_history(db, repo_id, path)
+    if not commits:
+        typer.echo(f"No indexed commits touch {path}. Run `cerno history index` first?")
+        raise typer.Exit(1)
+    edges = hist.creation_and_deletion(commits, path)
+    typer.echo(f"created: {edges['created']}")
+    typer.echo(f"deleted: {edges['deleted']}")
+    for c in commits:
+        f = next(f for f in c.files if f.path == path or f.old_path == path)
+        typer.echo(f"{c.hash[:10]} {c.author_date[:10]} {f.change_type:<9} {c.subject[:60]}")
+
+
+@history_app.command("markers")
+def history_markers(repo: Path | None = REPO,
+                    add: str = typer.Option(None, help="Kind to record: good|bad|deployment|release|test_run|build|incident."),
+                    commit: str = typer.Option(None), description: str = typer.Option("")):
+    """List markers, or record one with --add."""
+    from cerno.analysis import history as hist
+
+    root = _root(repo)
+    db = _db(root)
+    repo_id = hist.repo_id_for(root)
+    if add:
+        resolved = git.git(root, "rev-parse", commit, check=False).strip() or commit if commit else None
+        marker = hist.add_marker(db, repo_id, add, resolved, description or add)
+        typer.echo(f"recorded {marker.id}: {marker.kind} @ {marker.commit or '(no commit)'}")
+        return
+    for m in hist.list_markers(db, repo_id):
+        typer.echo(f"{m.id} {m.kind:<10} {(m.commit or '')[:10]:<10} {m.timestamp[:19]} {m.description}")
+
+
+@app.command()
+def diagnose(repo: Path | None = REPO, good: str = typer.Option(None), bad: str = typer.Option(None),
+            since: str = typer.Option(None), until: str = typer.Option(None), query: str = typer.Option(None),
+            file: str = typer.Option(None, "--file", help="Suspected file path."),
+            symbol: str = typer.Option(None, help="Suspected symbol name."),
+            dependency: str = typer.Option(None, help="Suspected dependency name."),
+            incident: str = typer.Option(None, help="Free-text incident description."),
+            as_json: bool = typer.Option(False, "--json")):
+    """Diagnose a production breakage: rank suspect commits between a known-good and known-bad point."""
+    from cerno.verification.diagnosis import diagnose as run_diagnosis
+
+    root = _root(repo)
+    db = _db(root)
+    settings = Settings.load(root)
+    result = run_diagnosis(root, db, settings, good=good, bad=bad, since=since, until=until, query=query,
+                           suspected_path=file, suspected_symbol=symbol, suspected_dependency=dependency,
+                           incident_description=incident)
+    if as_json:
+        typer.echo(json.dumps(result.model_dump(), indent=2))
+        return
+    typer.echo(result.narrative)
+    typer.echo(f"model used: {result.model_used}\n")
+    for s in result.suspects[:15]:
+        typer.echo(f"[{s.evidence:<15}] {s.score:>5.1f}  {s.ref[:10] if s.kind == 'commit' else s.ref:<40} {s.reason}")
+    if result.bisect_plan:
+        typer.echo("\nSuggested manual bisect (not run automatically):")
+        for line in result.bisect_plan:
+            typer.echo(f"  {line}")
 
 
 def _register(hook: str) -> None:
