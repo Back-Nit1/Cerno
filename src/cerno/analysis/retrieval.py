@@ -15,7 +15,7 @@ STOPWORDS = set(
 )
 RISKY = re.compile(r"(auth|session|login|password|token|security|payment|billing|config|schema|migration|permission)", re.I)
 # Transparent, configurable weights. Scores rank candidates; they are not probabilities.
-WEIGHTS = {"changed": 1.5, "keyword": 2.0, "graph": 2.0, "test": 1.5, "event": 0.5, "risk": 1.0}
+WEIGHTS = {"changed": 1.5, "keyword": 2.0, "graph": 2.0, "test": 1.5, "event": 0.5, "risk": 1.0, "segment": 1.0}
 MAX_CANDIDATES = 12
 MAX_PACKET_DIFF_LINES = 40
 
@@ -89,6 +89,16 @@ def rank(req: Requirement, ctx: Context) -> list[Candidate]:
         bump(change.path, Candidate(None, change.path), WEIGHTS["changed"] * 0.7, f"{change.status} file")
         if hits := overlap(kw, split_identifier(change.path)):
             bump(change.path, found[change.path], WEIGHTS["keyword"] * len(hits), f"keywords: {', '.join(sorted(hits))}")
+
+    # Retrieval starts from the prompt segment(s) that introduced/refined this requirement; a match there
+    # is a reason, not a filter, so other segments stay reachable if nothing turns up here.
+    if req.origin_prompt_id and ctx.attributions:
+        origin_prompts = {req.origin_prompt_id, *req.refined_by}
+        for key, cand in found.items():
+            attr = ctx.attributions.get(cand.path)
+            if attr and attr.prompt_id in origin_prompts:
+                bump(key, cand, WEIGHTS["segment"], f"changed in requirement {req.id}'s originating prompt segment "
+                                                    f"({attr.segment_id}, {attr.confidence} attribution)")
     return sorted(found.values(), key=lambda c: (-c.score, c.path, c.symbol_id or ""))[:MAX_CANDIDATES]
 
 
