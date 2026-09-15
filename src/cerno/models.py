@@ -10,6 +10,7 @@ RequirementType = Literal[
 Status = Literal["VERIFIED", "LIKELY", "UNCERTAIN", "VIOLATED"]
 EvidenceLevel = Literal["runtime", "test", "structural", "semantic", "insufficient"]
 CheckKind = Literal["test", "build", "lint", "typecheck"]
+PromptClassification = Literal["new_task", "refinement", "correction", "replacement", "continuation", "ambiguous"]
 
 
 class Requirement(BaseModel):
@@ -19,6 +20,12 @@ class Requirement(BaseModel):
     priority: Literal["critical", "high", "normal"]
     explicit: bool
     verification_hint: str | None = None
+    # Provenance (backward-compatible: all default so pre-existing constructions are unaffected).
+    origin_prompt_id: str | None = None  # which prompt introduced this requirement
+    refined_by: list[str] = []  # prompt ids that refined it without replacing it
+    superseded_by: str | None = None  # prompt id that superseded it, if any
+    active: bool = True  # superseded requirements are kept for history but are not active
+    segment_ids: list[str] = []  # prompt-to-prompt diff segments relevant to this requirement
 
 
 class IntentContract(BaseModel):
@@ -26,6 +33,36 @@ class IntentContract(BaseModel):
     requirements: list[Requirement]
     protected_areas: list[str] = []
     explicit_acceptance_criteria: list[str] = []
+    ambiguities: list[str] = []  # prompt relationships or requirements needing developer review
+
+
+class PromptRecord(BaseModel):
+    """One structured UserPromptSubmit event. Classification fields are filled in by `cerno analyze`,
+    never by hooks: hooks only ever capture text and git state, so they stay model-call-free."""
+
+    id: str
+    session_id: str
+    seq: int
+    timestamp: str
+    text: str
+    head: str | None = None  # git HEAD at capture time
+    tree: str | None = None  # worktree tree id at capture time (the prompt's git checkpoint)
+    classification: PromptClassification | None = None
+    refines: list[str] = []  # prompt ids this prompt refines
+    supersedes: list[str] = []  # prompt ids this prompt supersedes
+    confidence: float | None = None
+    ambiguous: bool = False
+
+
+class ChangeAttribution(BaseModel):
+    """Temporal attribution of one changed file to the prompt that immediately preceded its change.
+    Evidence of correlation in time, not proof of causality, unless a tool event gives direct evidence."""
+
+    path: str
+    prompt_id: str | None
+    segment_id: str | None
+    confidence: Literal["direct", "temporal"]
+    basis: str
 
 
 class HookEvent(BaseModel):
@@ -41,7 +78,7 @@ class HookEvent(BaseModel):
 
 
 class Snapshot(BaseModel):
-    kind: Literal["baseline", "final"]
+    kind: Literal["baseline", "final", "prompt"]
     repo_root: str
     head: str | None
     tree: str | None  # git tree object of the whole working tree (tracked + untracked, .gitignore honored)
@@ -52,6 +89,7 @@ class Snapshot(BaseModel):
     project_types: list[str]
     scripts: dict[str, list[str]]
     timestamp: str
+    prompt_id: str | None = None  # set when kind == "prompt"
 
 
 class FileChange(BaseModel):
@@ -73,6 +111,19 @@ class SymbolChange(BaseModel):
     end_line: int
     callers: list[str] = []
     callees: list[str] = []
+
+
+class DiffSegment(BaseModel):
+    """A git-tree-to-git-tree diff between two consecutive checkpoints, attributed to the prompt that opened it."""
+
+    id: str
+    from_label: str
+    to_label: str
+    from_tree: str
+    to_tree: str
+    prompt_id: str | None  # the prompt Claude was acting on during this segment, if any
+    files: list[FileChange] = []
+    symbols: list[SymbolChange] = []
 
 
 class Evidence(BaseModel):

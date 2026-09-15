@@ -10,6 +10,7 @@ from pydantic import BaseModel
 TABLES = [
     "sessions", "requirements", "events", "file_changes", "symbol_changes", "evidence",
     "project_checks", "verdicts", "agent_claims", "model_usage", "change_assessments",
+    "prompt_timeline", "diff_segments", "attributions",
 ]
 SCHEMA_VERSION = 1
 
