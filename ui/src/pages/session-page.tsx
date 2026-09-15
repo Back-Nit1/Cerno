@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { VerdictBadge } from "@/components/verdict-badge";
 import { EvidenceLevel } from "@/components/evidence-level";
 import { AnalysisProgress } from "@/components/analysis-progress";
+import { PromptTimeline } from "@/components/prompt-timeline";
 import { RequirementDrawer } from "@/components/requirement-drawer";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api";
@@ -27,6 +28,8 @@ export function SessionPage() {
 
   const verdictByReq = new Map(session.verdicts.map((v) => [v.requirement_id, v]));
   const openRequirement = session.intent.requirements.find((r) => r.id === openRequirementId) ?? null;
+  const activeRequirements = session.intent.requirements.filter((r) => r.active);
+  const supersededRequirements = session.intent.requirements.filter((r) => !r.active);
   const usage = session.usage;
   const coveragePct = usage.files_in_repository > 0 ? Math.round((1 - usage.files_inspected / usage.files_in_repository) * 100) : null;
 
@@ -62,7 +65,7 @@ export function SessionPage() {
           <CardTitle>Requirements</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-1">
-          {session.intent.requirements.map((r) => {
+          {activeRequirements.map((r) => {
             const v = verdictByReq.get(r.id);
             return (
               <button
@@ -84,6 +87,37 @@ export function SessionPage() {
           })}
         </CardContent>
       </Card>
+
+      {supersededRequirements.length > 0 && (
+        <Card className="border-dashed opacity-80">
+          <CardHeader>
+            <CardTitle className="text-muted-foreground">Superseded requirements</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1">
+            {supersededRequirements.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setOpenRequirementId(r.id)}
+                className="flex items-center justify-between gap-4 rounded-md px-2 py-2 text-left text-sm text-muted-foreground line-through hover:bg-secondary"
+              >
+                <span className="flex-1">{r.text}</span>
+                <span className="font-mono text-xs no-underline">superseded by {r.superseded_by ?? "?"}</span>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {session.prompt_timeline.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Prompt timeline</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PromptTimeline prompts={session.prompt_timeline} />
+          </CardContent>
+        </Card>
+      )}
 
       {session.unexpected_changes.length > 0 && (
         <Card>
