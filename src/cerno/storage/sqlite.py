@@ -1,4 +1,9 @@
-"""SQLite state. Each table keeps a few query columns plus the full model as JSON."""
+"""SQLite state. Each table keeps a few query columns plus the full model as JSON.
+
+History-layer tables (repo_identity, commits, session_commit_links, markers, diagnoses) reuse this
+same generic (session_id, item_id, seq, data) shape with `session_id` holding the repo_id instead of
+a session id -- there is nothing repo-specific about the storage engine, only about what's in `data`.
+"""
 
 import json
 import sqlite3
@@ -11,8 +16,10 @@ TABLES = [
     "sessions", "requirements", "events", "file_changes", "symbol_changes", "evidence",
     "project_checks", "verdicts", "agent_claims", "model_usage", "change_assessments",
     "prompt_timeline", "diff_segments", "attributions",
+    # Repository history layer (all keyed by repo_id in the session_id column; see storage docstring).
+    "repo_identity", "commits", "session_commit_links", "markers", "diagnoses",
 ]
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _schema() -> str:
@@ -34,8 +41,17 @@ class DB:
         self.lock = threading.Lock()
         with self.lock:
             self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.executescript(_schema())
-            self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """CREATE TABLE IF NOT EXISTS is itself the migration: every table has always used the same
+        generic (pk, session_id, item_id, seq, data) shape, so adding a table never touches existing
+        rows. Older databases (pre history-layer, user_version < 2) just gain the new empty tables."""
+        before = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if before < SCHEMA_VERSION:
+            with self.conn:
+                self.conn.executescript(_schema())
+                self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def put(self, table: str, session_id: str, item_id: str, item: BaseModel | dict, seq: int = 0) -> None:
         assert table in TABLES
