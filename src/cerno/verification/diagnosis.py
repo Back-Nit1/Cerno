@@ -146,6 +146,8 @@ def diagnose(root: Path, db: DB, settings: Settings, *, good: str | None = None,
         good = markers[-1].commit
     if bad is None and (markers := history.list_markers(db, repo_id, "bad")):
         bad = markers[-1].commit
+    if good and not bad:
+        bad = git.get_head(root)  # a known-good marker still narrows the range against current HEAD
     candidates = candidate_commits(root, db, repo_id, good, bad, since, until)
     query_kw = keywords(" ".join(filter(None, [query, incident_description])))
     session_of = _session_index(db, repo_id)

@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from cerno.analysis import git
+from cerno.api.history import history_router
 from cerno.capture.snapshots import load_snapshot
 from cerno.config import Settings, db_file
 from cerno.models import Session
@@ -185,6 +186,8 @@ def create_app(root: Path | None = None) -> FastAPI:
                 await asyncio.sleep(0.5)
 
         return StreamingResponse(events(), media_type="text/event-stream")
+
+    app.include_router(history_router(root, db, settings))
 
     if UI_DIST.is_dir():
         @app.get("/{path:path}", include_in_schema=False)

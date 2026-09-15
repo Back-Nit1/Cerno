@@ -9,7 +9,10 @@ export function SessionsPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-8">
-      <h1 className="font-mono text-lg font-medium text-heading">Cerno · Sessions</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="font-mono text-lg font-medium text-heading">Cerno · Sessions</h1>
+        <Link to="/history" className="text-sm text-muted-foreground underline">Repository history →</Link>
+      </div>
 
       {loading && <Skeleton className="h-20 w-full" />}
       {error && <p className="text-sm text-violated">{error}</p>}

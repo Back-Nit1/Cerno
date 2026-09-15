@@ -1,10 +1,36 @@
 // Thin fetch wrapper over the FastAPI endpoints in prompt.md §16.
 // No caching/business logic here — that lives in the backend.
-import type { Evidence, FileChange, Requirement, SessionDetail, SessionSummary, SymbolChange, UsageMetrics } from "@/types";
+import type {
+  CommitPage,
+  CommitRecord,
+  DiagnosisRequest,
+  DiagnosisResult,
+  Evidence,
+  FileChange,
+  Marker,
+  MarkerKind,
+  RepoIdentity,
+  Requirement,
+  SessionCommitLink,
+  SessionDetail,
+  SessionSummary,
+  SymbolChange,
+  UsageMetrics,
+} from "@/types";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: GET ${path}`);
+  return res.json() as Promise<T>;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: POST ${path}`);
   return res.json() as Promise<T>;
 }
 
@@ -21,4 +47,20 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}: POST /sessions/${id}/analyze`);
     return res.json() as Promise<{ started: boolean }>;
   },
+};
+
+export const historyApi = {
+  status: () => get<RepoIdentity>("/history/status"),
+  commits: (beforeSeq?: number, limit = 50) =>
+    get<CommitPage>(`/history/commits?limit=${limit}${beforeSeq != null ? `&before_seq=${beforeSeq}` : ""}`),
+  commit: (hash: string) => get<CommitRecord & { session_id: string | null }>(`/history/commits/${hash}`),
+  path: (path: string) =>
+    get<{ path: string; commits: CommitRecord[]; created: unknown; deleted: unknown }>(
+      `/history/path?path=${encodeURIComponent(path)}`,
+    ),
+  sessionLink: (sessionId: string) => get<SessionCommitLink>(`/history/sessions/${sessionId}`),
+  markers: (kind?: MarkerKind) => get<Marker[]>(`/history/markers${kind ? `?kind=${kind}` : ""}`),
+  addMarker: (body: { kind: MarkerKind; commit?: string; description?: string }) =>
+    post<Marker>("/history/markers", body),
+  diagnose: (body: DiagnosisRequest) => post<DiagnosisResult>("/history/diagnose", body),
 };
