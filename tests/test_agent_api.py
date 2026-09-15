@@ -1,8 +1,10 @@
+import json
+
 from conftest import FakeClient, block
 from fastapi.testclient import TestClient
 
 from cerno.api.app import create_app
-from cerno.llm.anthropic import LLM
+from cerno.llm.openai import LLM
 from cerno.models import IntentContract
 from cerno.pipeline import build_context
 from cerno.verification.agent import verify_with_agent
@@ -37,16 +39,16 @@ def test_demo_deterministic_results(demo):
 
 def test_agent_tool_loop_then_verdict(demo):
     ctx, req = _context(demo)
-    first = [block("tool_use", id="t1", name="read_symbol",
-                   input={"symbol_id": "src/auth/session.js::SESSION_TTL_MS", "version": "baseline"})]
+    first = [block("function_call", call_id="t1", name="read_symbol",
+                   arguments=json.dumps({"symbol_id": "src/auth/session.js::SESSION_TTL_MS", "version": "baseline"}))]
     verdict_holder = {}
 
     def second_turn(**kwargs):  # the model reads the tool result and cites its evidence id
-        result = kwargs["messages"][-1]["content"][0]["content"]
+        result = kwargs["input"][-1]["output"]
         verdict_holder["ev"] = ev_id = result.split("[evidence ")[1].split("]")[0]
-        return [block("tool_use", id="t2", name="submit_verdict", input={
+        return [block("function_call", call_id="t2", name="submit_verdict", arguments=json.dumps({
             "status": "VIOLATED", "evidence_level": "semantic", "summary": "SESSION_TTL_MS went from 24h to 30m.",
-            "evidence_ids": [ev_id], "missing_evidence": []})]
+            "evidence_ids": [ev_id], "missing_evidence": []}))]
 
     llm, client = _llm(demo, [first, second_turn])
     verdict = verify_with_agent(llm, ctx, req, "PACKET", [], ["agent"])
@@ -65,17 +67,18 @@ def test_agent_tool_loop_then_verdict(demo):
 
 def test_agent_budget_exhaustion_returns_uncertain(demo):
     ctx, req = _context(demo)
-    loop = [block("tool_use", id=f"t{i}", name="get_changed_files", input={}) for i in range(1)]
+    loop = [block("function_call", call_id=f"t{i}", name="get_changed_files", arguments="{}") for i in range(1)]
     llm, client = _llm(demo, [loop, loop, loop])
     verdict = verify_with_agent(llm, ctx, req, "PACKET-budget", [], ["agent"])
     assert verdict.status == "UNCERTAIN" and llm.calls == 3
-    assert client.requests[-1]["tool_choice"] == {"type": "tool", "name": "submit_verdict"}
+    assert client.requests[-1]["tool_choice"] == {"type": "function", "name": "submit_verdict"}
 
 
 def test_agent_malformed_verdict_is_rejected(demo):
     ctx, req = _context(demo)
-    bad = [block("tool_use", id="t1", name="submit_verdict", input={"status": "APPROVED", "summary": "lgtm"})]
-    text_only = [block("text", text="Looks good to me.")]
+    bad = [block("function_call", call_id="t1", name="submit_verdict",
+                 arguments=json.dumps({"status": "APPROVED", "summary": "lgtm"}))]
+    text_only = [block("message", content=[])]
     llm, _ = _llm(demo, [bad, text_only, text_only])
     verdict = verify_with_agent(llm, ctx, req, "PACKET-malformed", [], ["agent"])
     assert verdict.status == "UNCERTAIN"
@@ -84,9 +87,9 @@ def test_agent_malformed_verdict_is_rejected(demo):
 def test_agent_pure_opinion_cannot_verify(demo):
     ctx, req = _context(demo)
     ev = ctx.store.add("code", "final", "some code", raw="x").id
-    opinion = [block("tool_use", id="t1", name="submit_verdict", input={
+    opinion = [block("function_call", call_id="t1", name="submit_verdict", arguments=json.dumps({
         "status": "VERIFIED", "evidence_level": "runtime", "summary": "Looks right.", "evidence_ids": [ev],
-        "missing_evidence": []})]
+        "missing_evidence": []}))]
     llm, _ = _llm(demo, [opinion])
     assert verify_with_agent(llm, ctx, req, "PACKET-opinion", [], ["agent"]).status == "LIKELY"
 

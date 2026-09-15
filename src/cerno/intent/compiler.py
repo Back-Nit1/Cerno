@@ -8,7 +8,7 @@ import re
 
 from pydantic import ValidationError
 
-from cerno.llm.anthropic import LLM
+from cerno.llm.openai import LLM, call_arguments, function_calls
 from cerno.models import IntentContract, Requirement
 from cerno.privacy import redact
 from cerno.storage.sqlite import DB
@@ -42,10 +42,11 @@ _REQ_SCHEMA = {
     },
 }
 INTENT_TOOL = {
+    "type": "function",
     "name": "submit_intent_contract",
     "description": "Submit the compiled Intent Contract.",
     "strict": True,
-    "input_schema": {
+    "parameters": {
         "type": "object",
         "additionalProperties": False,
         "required": ["task_summary", "requirements", "protected_areas", "explicit_acceptance_criteria"],
@@ -81,12 +82,11 @@ def compile_intent(llm: LLM, prompts: list[str], db: DB | None = None) -> tuple[
     if llm.available:
         try:
             response = llm.create(
-                "intent", system=SYSTEM, max_tokens=2048, tools=[INTENT_TOOL],
-                tool_choice={"type": "tool", "name": "submit_intent_contract"},
-                messages=[{"role": "user", "content": f"<developer_request>\n{redact(text)}\n</developer_request>"}],
+                "intent", instructions=SYSTEM, max_output_tokens=2048, tools=[INTENT_TOOL],
+                tool_choice={"type": "function", "name": "submit_intent_contract"},
+                input=[{"role": "user", "content": f"<developer_request>\n{redact(text)}\n</developer_request>"}],
             )
-            block = next(b for b in response.content if b.type == "tool_use")
-            contract = parse_contract(block.input)
+            contract = parse_contract(call_arguments(next(iter(function_calls(response)))))
             if db is not None:
                 db.cache_put(key, contract.model_dump())
             return contract, "model"

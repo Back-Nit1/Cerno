@@ -15,7 +15,7 @@ every requirement.
 Claude Code hooks ──> Capture (prompts, tool events, baseline/final git tree snapshots)
                         │
                         ▼
-                 Intent Compiler (Haiku, strict schema) ──> Intent Contract (R1..Rn)
+                 Intent Compiler (OpenAI, strict schema) ─> Intent Contract (R1..Rn)
                         │
         ┌───────────────┴────────────────┐
         ▼                                ▼
@@ -29,7 +29,7 @@ Claude Code hooks ──> Capture (prompts, tool events, baseline/final git tree
                         ▼                          │
       Evidence retrieval: rank + compact packet    │
                         ▼                          │
-      Verification agent (Haiku, read-only tools,  │
+      Verification agent (OpenAI, read-only tools, │
       bounded steps, cites evidence ids)           │
                         ▼                          ▼
       Verdict rules (VERIFIED needs test/runtime/rule evidence)
@@ -45,7 +45,7 @@ A model's opinion alone can never produce VERIFIED; that rule is enforced in cod
 
 ```bash
 uv sync
-cp .env.example .env                 # set ANTHROPIC_API_KEY (optional; deterministic analysis works without it)
+cp .env.example .env                 # set OPENAI_API_KEY (optional; deterministic analysis works without it)
 uv run cerno demo                    # reproducible scenario, see DEMO.md
 uv run cerno dashboard --repo ~/.cerno-demo
 ```
@@ -82,12 +82,12 @@ uv run --project /path/to/Cerno cerno analyze   # latest session
 
 ## Configuration
 
-See `.env.example`: `CERNO_MODEL` (default `claude-haiku-4-5-20251001`), `CERNO_MAX_TOOL_STEPS`, `CERNO_MAX_GRAPH_DEPTH`,
+See `.env.example`: `CERNO_MODEL` (default `gpt-5.6-luna`), `CERNO_MAX_TOOL_STEPS`, `CERNO_MAX_GRAPH_DEPTH`,
 `CERNO_MAX_SNIPPET_LINES`, `CERNO_MAX_SEARCH_RESULTS`, `CERNO_CHECK_TIMEOUT`, `CERNO_DB_PATH`.
 
 ## Privacy and safety
 
-- Local-first. Only small, redacted evidence snippets are sent to the Anthropic API, never the whole repository.
+- Local-first. Only small, redacted evidence snippets are sent to the OpenAI Responses API, never the whole repository.
 - `.env`, key/credential files, `.gitignore`d paths, and `.cernoignore` patterns are excluded.
 - The model has no shell and no write access. Project checks come only from `package.json` scripts or `pyproject.toml`.
 - OBSERVE mode: Cerno never blocks Claude Code, and hook failures exit 0.
@@ -99,10 +99,48 @@ src/cerno/  cli.py config.py models.py privacy.py pipeline.py demo.py
             capture/ (hooks, snapshots, transcript)   intent/compiler.py
             analysis/ (git, tree_sitter, symbols, graph, retrieval)
             evidence/store.py   verification/ (context, deterministic, runtime, tools, agent, verdict)
-            llm/anthropic.py    storage/sqlite.py    api/app.py
+            llm/openai.py       storage/sqlite.py    api/app.py
 ui/         React + Vite dashboard
 tests/      pytest suite (API mocked for the agent loop)
 examples/demo-auth-app/
+```
+
+## Development and tests
+
+The repository has two test suites:
+
+```bash
+# Backend, capture pipeline, analysis, verification, and API
+uv run pytest
+
+# Dashboard utilities
+cd ui
+npm ci
+npm test
+```
+
+The Python suite currently contains 24 collected cases across four files:
+
+- `tests/test_capture_git.py` checks Git snapshots and diffs, dirty-work attribution, hook event persistence and
+  normalization, fail-open handling of invalid hook input, and non-destructive/idempotent hook installation.
+- `tests/test_analysis.py` checks JavaScript/TypeScript and Python symbol extraction, changed-symbol classification,
+  import/caller relationships, bounded graph traversal, and ranked evidence retrieval with `.cernoignore` filtering.
+- `tests/test_intent_rules.py` checks model-produced and fallback intent contracts, the requirement cap, malformed model
+  output, evidence requirements for verdicts, and deterministic rules for dependencies, schema tables, and tests.
+- `tests/test_agent_api.py` runs the demo analysis once per test session, then checks deterministic results, the mocked
+  verification-agent tool loop and cache, budget/malformed-output fallbacks, the rule preventing opinion-only
+  `VERIFIED` verdicts, and the FastAPI response contract. OpenAI calls are scripted with `FakeClient`, so the suite does
+  not require an API key.
+
+The UI suite currently contains three Vitest cases in `ui/src/lib/session-view.test.ts`. They check analysis-progress
+stage states and verdict-status counting. The shared `demo` pytest fixture invokes the demo app's real `node --test`
+command.
+
+Useful additional checks are:
+
+```bash
+uv run ruff check .
+cd ui && npm run lint && npm run build
 ```
 
 ## Known limitations

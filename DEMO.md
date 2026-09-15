@@ -6,7 +6,7 @@
 
 ```bash
 uv sync
-cp .env.example .env        # add ANTHROPIC_API_KEY for semantic verdicts
+cp .env.example .env        # add OPENAI_API_KEY for semantic verdicts
 (cd ui && npm install && npm run build)   # dashboard, optional
 ```
 
@@ -48,7 +48,7 @@ With or without a key:
 - Claim "All tests pass" CONFIRMED; claim "login and session behavior is unchanged" CONTRADICTED once R3 is VIOLATED.
 - Efficiency line: repository files vs files inspected, tokens, source lines sent.
 
-Without `ANTHROPIC_API_KEY`, semantic requirements are UNCERTAIN (never guessed) and the intent contract uses the
+Without `OPENAI_API_KEY`, semantic requirements are UNCERTAIN (never guessed) and the intent contract uses the
 labeled sentence fallback.
 
 ## 3. Dashboard

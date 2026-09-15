@@ -35,7 +35,7 @@ def demo(tmp_path_factory, monkeypatch_session):
     from cerno.demo import build_demo
     from cerno.pipeline import analyze
 
-    monkeypatch_session.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch_session.delenv("OPENAI_API_KEY", raising=False)
     root = tmp_path_factory.mktemp("demo") / "app"
     session_id = build_demo(root)
     settings = Settings.load(root)
@@ -55,16 +55,16 @@ def block(type_: str, **fields):
 
 
 class FakeClient:
-    """Scripted stand-in for anthropic.Anthropic: returns queued responses and records requests."""
+    """Scripted stand-in for OpenAI: returns queued Responses API outputs and records requests."""
 
     def __init__(self, responses):
-        self.responses, self.requests = list(responses), []
-        self.messages = SimpleNamespace(create=self._create)
+        self._queued, self.requests = list(responses), []
+        self.responses = SimpleNamespace(create=self._create)
 
     def _create(self, **kwargs):
         self.requests.append(kwargs)
-        content = self.responses.pop(0) if self.responses else [block("text", text="...")]
-        content = content(**kwargs) if callable(content) else content
-        usage = SimpleNamespace(input_tokens=100, output_tokens=20, cache_read_input_tokens=0,
-                                cache_creation_input_tokens=0)
-        return SimpleNamespace(content=content, usage=usage)
+        output = self._queued.pop(0) if self._queued else [block("message", content=[])]
+        output = output(**kwargs) if callable(output) else output
+        usage = SimpleNamespace(input_tokens=100, output_tokens=20,
+                                input_tokens_details=SimpleNamespace(cached_tokens=0))
+        return SimpleNamespace(output=output, usage=usage)

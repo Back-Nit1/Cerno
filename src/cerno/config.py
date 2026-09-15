@@ -9,7 +9,7 @@ CERNO_DIR = ".cerno"
 
 
 class Settings(BaseModel):
-    model: str = "claude-haiku-4-5-20251001"
+    model: str = "gpt-5.6-luna"
     max_tool_steps: int = 8
     max_graph_depth: int = 2
     max_snippet_lines: int = 120
@@ -37,7 +37,7 @@ class Settings(BaseModel):
             "check_timeout": "CERNO_CHECK_TIMEOUT",
             "db_path": "CERNO_DB_PATH",
             "log_level": "CERNO_LOG_LEVEL",
-            "api_key": "ANTHROPIC_API_KEY",
+            "api_key": "OPENAI_API_KEY",
         }
         return cls(**{f: env[e] for f, e in fields.items() if env.get(e)})
 

@@ -7,3 +7,6 @@ __pycache__/
 .env
 node_modules/
 ui/dist/
+
+/session1.md
+/session2.md

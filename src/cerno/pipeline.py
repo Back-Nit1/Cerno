@@ -13,7 +13,7 @@ from cerno.capture.transcript import extract_claims, final_assistant_text
 from cerno.config import Settings, db_file
 from cerno.evidence.store import EvidenceStore
 from cerno.intent.compiler import compile_intent
-from cerno.llm.anthropic import LLM
+from cerno.llm.openai import LLM
 from cerno.models import AgentClaim, ChangeAssessment, HookEvent, Session, UsageStats, Verdict
 from cerno.storage.sqlite import DB
 from cerno.verification.agent import verify_with_agent

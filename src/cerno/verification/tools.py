@@ -15,10 +15,11 @@ CHECK_KINDS = ["test", "build", "lint", "typecheck"]
 
 def _tool(name: str, description: str, **props: dict) -> dict:
     return {
+        "type": "function",
         "name": name,
         "description": description,
         "strict": True,
-        "input_schema": {"type": "object", "additionalProperties": False, "required": list(props), "properties": props},
+        "parameters": {"type": "object", "additionalProperties": False, "required": list(props), "properties": props},
     }
 
 

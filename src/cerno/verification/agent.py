@@ -1,11 +1,11 @@
-"""Bounded tool-using verification agent (Anthropic SDK directly, no framework)."""
+"""Bounded tool-using verification agent (OpenAI Responses API, no framework)."""
 
 import hashlib
 import json
 
 from pydantic import ValidationError
 
-from cerno.llm.anthropic import LLM, block_to_param
+from cerno.llm.openai import LLM, call_arguments, function_calls, output_to_param
 from cerno.models import Requirement, TraceStep, Verdict
 from cerno.verification.context import Context
 from cerno.verification.tools import TOOLS, execute
@@ -39,18 +39,18 @@ missing_evidence: what would settle any remaining doubt (empty if none)."""
 RESULT_KEEP_TURNS = 2
 
 
-def _tool_result(tool_use_id: str, text: str, is_error: bool = False) -> dict:
-    return {"type": "tool_result", "tool_use_id": tool_use_id, "content": text, "is_error": is_error}
+def _tool_result(call_id: str, text: str, is_error: bool = False) -> dict:
+    output = f"ERROR: {text}" if is_error else text
+    return {"type": "function_call_output", "call_id": call_id, "output": output}
 
 
-def _compact(messages: list[dict]) -> None:
+def _compact(items: list[dict]) -> None:
     """Elide older tool outputs so history does not grow with every step; evidence stays retrievable by id."""
-    result_turns = [m for m in messages if m["role"] == "user" and isinstance(m["content"], list)]
-    for message in result_turns[:-RESULT_KEEP_TURNS]:
-        for block in message["content"]:
-            text = block.get("content")
-            if isinstance(text, str) and not text.endswith("(elided)"):
-                block["content"] = text.splitlines()[0][:200] + " ... (elided)"
+    results = [item for item in items if item.get("type") == "function_call_output"]
+    for item in results[:-RESULT_KEEP_TURNS]:
+        text = item.get("output")
+        if isinstance(text, str) and not text.endswith("(elided)"):
+            item["output"] = text.splitlines()[0][:200] + " ... (elided)"
 
 
 def _cache_key(llm: LLM, ctx: Context, req: Requirement, packet: str) -> str:
@@ -65,7 +65,7 @@ def verify_with_agent(llm: LLM, ctx: Context, req: Requirement, packet: str, see
     plan_text = " -> ".join(plan)
     if not llm.available:
         return uncertain(
-            req.id, "Semantic verification unavailable (ANTHROPIC_API_KEY not set); deterministic evidence alone "
+            req.id, "Semantic verification unavailable (OPENAI_API_KEY not set); deterministic evidence alone "
             "does not settle this requirement.", ["model reasoning over the evidence packet"], seed_ids, plan=plan_text,
         )
     key = _cache_key(llm, ctx, req, packet)
@@ -76,46 +76,49 @@ def verify_with_agent(llm: LLM, ctx: Context, req: Requirement, packet: str, see
     ctx.requirement_files, ctx.extra_expansion_used = set(), False
     calls_before, max_steps = ctx.tool_calls, ctx.settings.max_tool_steps
     trace: list[TraceStep] = []
-    messages: list[dict] = [{
+    items: list[dict] = [{
         "role": "user",
         "content": ctx.send(packet) + f"\n\nBudget: {max_steps} turns. Call submit_verdict as soon as evidence suffices.",
     }]
-    system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
     verdict, nudged = None, False
 
     for step in range(max_steps):
         final_turn = step == max_steps - 1
         response = llm.create(
-            "verify", system=system, tools=TOOLS, messages=messages, max_tokens=1500,
-            tool_choice={"type": "tool", "name": "submit_verdict"} if final_turn else {"type": "auto"},
+            "verify", instructions=SYSTEM_PROMPT, tools=TOOLS, input=items, max_output_tokens=1500,
+            tool_choice={"type": "function", "name": "submit_verdict"} if final_turn else "auto",
         )
-        blocks = list(response.content)
-        uses = [b for b in blocks if b.type == "tool_use"]
-        messages.append({"role": "assistant", "content": [block_to_param(b) for b in blocks]})
+        output = list(getattr(response, "output", ()))
+        uses = function_calls(response)
+        items.extend(output_to_param(item) for item in output)
         if not uses:
             if nudged:
                 break
             nudged = True
-            messages.append({"role": "user", "content": "Call submit_verdict with your conclusion and cited evidence ids."})
+            items.append({"role": "user", "content": "Call submit_verdict with your conclusion and cited evidence ids."})
             continue
         results = []
         for use in uses:
-            args = use.input if isinstance(use.input, dict) else {}
+            try:
+                args = call_arguments(use)
+            except (json.JSONDecodeError, TypeError):
+                results.append(_tool_result(use.call_id, "invalid JSON arguments; call the tool again", True))
+                continue
             if use.name == "submit_verdict":
                 try:
                     verdict = Verdict(requirement_id=req.id, files_inspected=[], tool_calls_used=0, **args)
-                    results.append(_tool_result(use.id, "verdict recorded"))
+                    results.append(_tool_result(use.call_id, "verdict recorded"))
                 except (ValidationError, TypeError) as exc:
-                    results.append(_tool_result(use.id, f"invalid verdict, resubmit: {str(exc)[:400]}", True))
+                    results.append(_tool_result(use.call_id, f"invalid verdict, resubmit: {str(exc)[:400]}", True))
                 continue
             text, ids, is_error = execute(ctx, use.name, args)
             trace.append(TraceStep(tool=use.name, input=args, summary=text.splitlines()[0][:200] if text else "",
                                    evidence_ids=ids))
-            results.append(_tool_result(use.id, text, is_error))
+            results.append(_tool_result(use.call_id, text, is_error))
         if verdict is not None:
             break
-        messages.append({"role": "user", "content": results})
-        _compact(messages)
+        items.extend(results)
+        _compact(items)
 
     if verdict is None:
         verdict = uncertain(req.id, "Investigation ended without a valid verdict (step budget exhausted or malformed "

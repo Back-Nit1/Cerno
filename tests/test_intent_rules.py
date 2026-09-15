@@ -7,7 +7,7 @@ from test_analysis import _ctx
 from cerno.config import Settings
 from cerno.evidence.store import EvidenceStore
 from cerno.intent.compiler import MAX_REQUIREMENTS, compile_intent, fallback_contract, parse_contract
-from cerno.llm.anthropic import LLM
+from cerno.llm.openai import LLM
 from cerno.models import Requirement, Verdict
 from cerno.verification.deterministic import apply_rules
 from cerno.verification.verdict import finalize
@@ -28,11 +28,14 @@ def test_intent_compiler_parses_model_contract():
     contract = {"task_summary": "Add GitHub OAuth", "protected_areas": [], "explicit_acceptance_criteria": [],
                 "requirements": [_req("Users can authenticate with GitHub", rid="x"),
                                  _req("Do not create another database table", "prohibition", rid="y")]}
-    client = FakeClient([[block("tool_use", id="t", name="submit_intent_contract", input=contract)]])
+    client = FakeClient([[block("function_call", call_id="t", name="submit_intent_contract",
+                                arguments=json.dumps(contract))]])
     result, source = compile_intent(LLM(Settings(), client=client), [PROMPT])
     assert source == "model" and [r.id for r in result.requirements] == ["R1", "R2"]
     assert result.requirements[1].type == "prohibition" and result.requirements[0].verification_hint is None
-    assert client.requests[0]["tool_choice"] == {"type": "tool", "name": "submit_intent_contract"}
+    assert client.requests[0]["tool_choice"] == {"type": "function", "name": "submit_intent_contract"}
+    assert client.requests[0]["store"] is False
+    assert client.requests[0]["include"] == ["reasoning.encrypted_content"]
 
 
 def test_intent_compiler_caps_requirements_and_rejects_malformed():
@@ -40,7 +43,8 @@ def test_intent_compiler_caps_requirements_and_rejects_malformed():
             "requirements": [_req(f"req {i}") for i in range(30)]}
     assert len(parse_contract(many).requirements) == MAX_REQUIREMENTS
     bad = {"task_summary": "t", "requirements": [{"id": "R1", "text": "x", "type": "wish"}]}
-    client = FakeClient([[block("tool_use", id="t", name="submit_intent_contract", input=bad)]])
+    client = FakeClient([[block("function_call", call_id="t", name="submit_intent_contract",
+                                arguments=json.dumps(bad))]])
     result, source = compile_intent(LLM(Settings(), client=client), [PROMPT])
     assert source == "fallback" and len(result.requirements) == 6
 

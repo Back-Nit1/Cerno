@@ -61,7 +61,7 @@ def doctor(repo: Path | None = REPO):
         ("git repository", git.get_repository_root(root) is not None, str(root)),
         ("hooks installed", all(f"cerno hook {h}" in hooks_text for h in HOOK_EVENTS), str(settings_file)),
         (".cerno ignored", git.get_repository_root(root) is not None and _is_ignored(root), ".gitignore"),
-        ("ANTHROPIC_API_KEY", bool(settings.api_key), f"model {settings.model}" if settings.api_key
+        ("OPENAI_API_KEY", bool(settings.api_key), f"model {settings.model}" if settings.api_key
          else "absent: deterministic analysis only"),
     ]
     try:
@@ -113,7 +113,7 @@ def analyze(session_id: str | None = typer.Argument(None), repo: Path | None = R
         raise typer.Exit(1)
     settings = Settings.load(root)
     if not settings.api_key:
-        typer.secho("ANTHROPIC_API_KEY not set: semantic requirements will be UNCERTAIN.", fg="yellow")
+        typer.secho("OPENAI_API_KEY not set: semantic requirements will be UNCERTAIN.", fg="yellow")
     session = run(root, session_id, settings, on_progress=lambda label: typer.echo(f"● {label}", err=as_json))
     verdicts = db.list("verdicts", session_id)
     if as_json:
