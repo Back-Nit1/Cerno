@@ -8,7 +8,14 @@ from cerno.analysis.graph import RepoIndex
 from cerno.config import Settings
 from cerno.evidence.store import EvidenceStore
 from cerno.models import (
-    ChangeAttribution, CheckResult, DiffSegment, FileChange, HookEvent, IntentContract, Requirement, SymbolChange,
+    ChangeAttribution,
+    CheckResult,
+    DiffSegment,
+    FileChange,
+    HookEvent,
+    IntentContract,
+    Requirement,
+    SymbolChange,
 )
 from cerno.privacy import is_excluded, redact
 from cerno.storage.sqlite import DB

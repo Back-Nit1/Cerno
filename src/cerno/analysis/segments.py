@@ -38,7 +38,7 @@ def build_segments(root: Path, session_id: str, prompts: list[PromptRecord], db:
         return index_cache[tree]
 
     segments = []
-    for (from_label, from_pid, from_tree), (to_label, _, to_tree) in zip(checkpoints, checkpoints[1:]):
+    for (from_label, from_pid, from_tree), (to_label, _, to_tree) in zip(checkpoints, checkpoints[1:], strict=False):
         changes = git.get_changed_files(root, from_tree, to_tree) if from_tree != to_tree else []
         symbols = changed_symbols(changes, index_for(from_tree), index_for(to_tree)) if changes else []
         segments.append(DiffSegment(
