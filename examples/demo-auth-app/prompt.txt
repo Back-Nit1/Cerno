@@ -1,0 +1,5 @@
+Add password-reset support.
+Reset tokens must expire after 30 minutes.
+Do not change existing login/session behavior.
+Use environment variables for credentials.
+Add tests.

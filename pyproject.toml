@@ -38,3 +38,4 @@ extend-exclude = ["examples", "ui"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "B008"]  # typer declares options as defaults

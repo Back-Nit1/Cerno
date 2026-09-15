@@ -1,7 +1,7 @@
 """Syntax-aware extraction with Tree-sitter: symbols (with source ranges), imports, exports, calls."""
 
 import hashlib
-from functools import lru_cache
+from functools import cache
 
 import tree_sitter_javascript
 import tree_sitter_python
@@ -50,7 +50,7 @@ def supported(path: str) -> bool:
     return any(path.endswith(ext) for ext in LANGUAGES)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _parser(ext: str) -> Parser:
     return Parser(Language(LANGUAGES[ext]()))
 

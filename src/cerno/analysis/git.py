@@ -79,7 +79,8 @@ def snapshot_tree(root: Path) -> str:
         if real_index.exists():
             shutil.copy(real_index, index)  # reuse stat cache so unchanged files are not rehashed
         env = {"GIT_INDEX_FILE": str(index)}
-        git(root, "add", "-A", "--", ".", ":(exclude).cerno", env=env)
+        git(root, "add", "-A", env=env)
+        git(root, "rm", "-r", "-q", "--cached", "--ignore-unmatch", ".cerno", env=env)  # in case it is not ignored
         return git(root, "write-tree", env=env).strip()
 
 

@@ -133,7 +133,7 @@ class AgentClaim(BaseModel):
     id: str
     text: str
     category: str
-    result: Literal["SUPPORTED", "CONTRADICTED", "UNVERIFIED"]
+    result: Literal["CONFIRMED", "CONTRADICTED", "UNVERIFIABLE"]
     evidence_ids: list[str] = []
     summary: str = ""
 
