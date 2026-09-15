@@ -54,7 +54,7 @@ labeled sentence fallback.
 ## 3. Dashboard
 
 ```bash
-uv run cerno dashboard --repo ~/.cerno-demo     # http://127.0.0.1:8765 (serves ui/dist if built)
+uv run cerno dashboard --repo ~/.cerno-demo     # http://127.0.0.1:8000 (serves ui/dist if built)
 ```
 
 For UI development: `cd ui && npm run dev` (Vite proxies `/api` to the backend).

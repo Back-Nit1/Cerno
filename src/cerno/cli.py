@@ -137,7 +137,7 @@ def analyze(session_id: str | None = typer.Argument(None), repo: Path | None = R
 
 
 @app.command()
-def dashboard(repo: Path | None = REPO, host: str = "127.0.0.1", port: int = 8765):
+def dashboard(repo: Path | None = REPO, host: str = "127.0.0.1", port: int = 8000):
     """Serve the API (and the built UI from ui/dist if present)."""
     import uvicorn
 
