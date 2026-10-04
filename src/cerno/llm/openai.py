@@ -1,6 +1,8 @@
 """OpenAI Responses API adapter; records usage for every model call."""
 
 import json
+import time
+from collections import deque
 from datetime import UTC, datetime
 
 from cerno.config import Settings
@@ -28,13 +30,31 @@ class LLM:
 
             client = OpenAI(api_key=settings.api_key, max_retries=3, timeout=settings.request_timeout)
         self.client = client
+        self.max_calls, self.max_tokens = settings.max_model_calls, settings.max_total_tokens
+        self.per_minute, self._recent = settings.max_calls_per_minute, deque()
         self.input_tokens = self.output_tokens = self.cache_read_tokens = self.calls = 0
 
     @property
     def available(self) -> bool:
         return self.client is not None
 
+    def _throttle(self) -> None:
+        """Refuse once the run's budget is spent; otherwise wait so calls stay under the per-minute limit.
+        Bounds what a huge diff, a hostile rules file, or a prompt-injected loop can cost the key's owner."""
+        if self.calls >= self.max_calls or self.input_tokens + self.output_tokens >= self.max_tokens:
+            raise ProviderError(
+                f"model budget exhausted ({self.calls} calls, {self.input_tokens + self.output_tokens} tokens); "
+                "raise CERNO_MAX_MODEL_CALLS / CERNO_MAX_TOTAL_TOKENS if this run is legitimate")
+        now = time.monotonic()
+        while self._recent and now - self._recent[0] >= 60:
+            self._recent.popleft()
+        if len(self._recent) >= self.per_minute:
+            time.sleep(max(0.0, 60 - (now - self._recent[0])))
+            self._recent.popleft()
+        self._recent.append(time.monotonic())
+
     def _create_raw(self, **kwargs):
+        self._throttle()
         try:
             return self.client.responses.create(model=self.model, **kwargs)
         except Exception as exc:
