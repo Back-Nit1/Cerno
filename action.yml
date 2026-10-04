@@ -35,7 +35,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@v5
+    - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       with:
         enable-cache: true
 
@@ -58,6 +58,10 @@ runs:
         OUTPUT: ${{ inputs.output }}
         FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
         OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        # The checkout belongs to the pull request. Its .env must not configure the review, and its
+        # .cerno/ must not supply the verdict cache.
+        CERNO_NO_DOTENV: "1"
+        CERNO_DB_PATH: ${{ runner.temp }}/cerno-review.db
       run: |
         set -uo pipefail
         if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
