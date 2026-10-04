@@ -12,7 +12,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The head commit itself, with full history so merge-base(base, head) resolves.
           ref: ${{ github.event.pull_request.head.sha }}
@@ -27,7 +27,7 @@ jobs:
           rules: .cerno.toml
           fail-on-findings: "false"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: cerno-review

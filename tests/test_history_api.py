@@ -14,7 +14,7 @@ def _client(repo, commit_count: int = 5) -> TestClient:
         run_git(repo, "commit", "-qm", f"commit {i}")
     db = DB(db_file(repo, Settings.load(repo)))
     history.index(repo, db)
-    return TestClient(create_app(repo))
+    return TestClient(create_app(repo), base_url="http://127.0.0.1")
 
 
 def test_history_commits_endpoint_paginates_without_sending_everything_at_once(repo):

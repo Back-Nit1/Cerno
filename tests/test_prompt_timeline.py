@@ -251,7 +251,7 @@ def test_superseded_requirements_excluded_from_verdict_counts(repo, monkeypatch)
 
 
 def test_api_timeline_and_segments_endpoints(demo):
-    client = TestClient(create_app(demo.root))
+    client = TestClient(create_app(demo.root), base_url="http://127.0.0.1")
     sid = demo.session_id
     timeline = client.get(f"/api/sessions/{sid}/timeline").json()
     assert timeline and timeline[0]["seq"] == 1

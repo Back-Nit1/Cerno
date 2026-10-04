@@ -7,9 +7,10 @@ import threading
 from collections import Counter
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from cerno.analysis import git
 from cerno.api.history import history_router
@@ -19,17 +20,32 @@ from cerno.models import Session
 from cerno.storage.sqlite import DB
 
 UI_DIST = Path(__file__).resolve().parents[3] / "ui" / "dist"
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 UI_STATUS = {"analyzing": "analyzing", "analyzed": "complete", "failed": "failed"}
 
 
-def create_app(root: Path | None = None) -> FastAPI:
+def create_app(root: Path | None = None, allowed_hosts: list[str] | None = None) -> FastAPI:
     root = root or Path(os.environ.get("CERNO_REPO") or git.get_repository_root(Path.cwd()) or Path.cwd())
     settings = Settings.load(root)
     db = DB(db_file(root, settings))
     running: set[str] = set()
     app = FastAPI(title="Cerno", version="0.1.0")
-    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-                       allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(CORSMiddleware, allow_origins=DEV_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+    hosts = sorted({*LOOPBACK, "[::1]", *(allowed_hosts or [])})
+
+    @app.middleware("http")
+    async def same_origin_writes(request: Request, call_next):
+        """This API has no login, so a web page the developer happens to visit must not be able to drive it:
+        a state-changing request carrying a foreign Origin is refused."""
+        origin = request.headers.get("origin")
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and origin and origin not in DEV_ORIGINS:
+            if origin.split("://", 1)[-1] != request.headers.get("host"):
+                return JSONResponse({"detail": "cross-origin request refused"}, status_code=403)
+        return await call_next(request)
+
+    # Outermost: a request whose Host is not this machine (DNS rebinding) never reaches a route.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
     def session(sid: str) -> Session:
         row = db.get("sessions", sid, sid)
@@ -186,7 +202,7 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.post("/api/sessions/{sid}/analyze")
     def analyze(sid: str):
         session(sid)
-        if sid in running:
+        if running:  # one at a time, for any session: each analysis spends model budget and runs checks
             return {"started": False, "reason": "analysis already running"}
         running.add(sid)
 
