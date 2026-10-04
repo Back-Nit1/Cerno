@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +28,52 @@ def repo(tmp_path: Path):
     run_git(tmp_path, "add", "-A")
     run_git(tmp_path, "commit", "-qm", "init")
     return tmp_path
+
+
+BASE_AUTH = """function requireAdmin(user) {
+  if (!user || !user.isAdmin) {
+    throw new Error("forbidden");
+  }
+  return true;
+}
+
+function deleteProject(user, id) {
+  requireAdmin(user);
+  return db.remove(id);
+}
+
+module.exports = { requireAdmin, deleteProject };
+"""
+
+HEAD_AUTH = BASE_AUTH.replace("  requireAdmin(user);\n", "")
+
+TEST_FILE = """const { deleteProject } = require("../src/auth");
+
+test("deleteProject rejects non-admins", () => {
+  deleteProject({}, 1);
+});
+"""
+
+PACKAGE = json.dumps({"name": "demo", "scripts": {"test": "node -e \"process.exit(0)\""}}, indent=2) + "\n"
+
+
+@pytest.fixture
+def review_repo(repo):
+    """main holds the guarded version; `feature` (checked out) removed the permission check."""
+    write(repo, {"src/auth.js": BASE_AUTH, "tests/auth.test.js": TEST_FILE, "package.json": PACKAGE})
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-qm", "base")
+    run_git(repo, "branch", "-M", "main")
+    run_git(repo, "checkout", "-qb", "feature")
+    write(repo, {"src/auth.js": HEAD_AUTH})
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-qm", "drop the admin check")
+    return repo
+
+
+def offending_line(repo) -> int:
+    lines = (repo / "src/auth.js").read_text().splitlines()
+    return lines.index("  return db.remove(id);") + 1
 
 
 @pytest.fixture(scope="session")
