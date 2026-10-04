@@ -89,12 +89,15 @@ With `openai-api-key` set, the review sends repository content to the OpenAI API
 the diff, the text of the rules, and whatever excerpts the agent asks for while investigating. The
 tools it can ask with are listed in `src/cerno/verification/tools.py` — symbol bodies before and after
 the change, callers and references of a changed symbol, code search hits, related tests, and the
-stdout tails of checks that ran (none in CI, since `--no-checks` is fixed). That is source code leaving your CI environment for a third party.
-On a public repository the diff is already public; on a private one, decide deliberately.
+stdout tails of checks that ran (none in CI, since `--no-checks` is fixed). That is source code
+leaving your CI environment for a third party. On a public repository the diff is already public; on a
+private one, decide deliberately.
 
-Cerno does not send `.env` files, keys or similar; `src/cerno/privacy.py` excludes those paths outright and
-redacts secret-shaped strings it recognises elsewhere. Treat that as defence in depth, not as a guarantee: if your source contains embedded
-credentials, a reviewer agent reading that source will read them too.
+Cerno does not send `.env` files, keys or similar: `src/cerno/privacy.py` excludes those paths
+outright and redacts secret-shaped strings it recognises elsewhere (`privacy.redact`,
+`privacy.SECRET_PATTERNS`). Treat that as defence in depth, not as a guarantee — if your source holds
+embedded credentials in a shape those patterns do not match, an agent reading that source reads them
+too.
 
 ## Fork behaviour, and what a run without a key looks like
 
