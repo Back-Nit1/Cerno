@@ -1,0 +1,91 @@
+name: Cerno review
+description: >-
+  Report production risks in a pull-request diff. Report-only: it never executes code from the pull
+  request and never writes to GitHub.
+author: Cerno
+
+inputs:
+  openai-api-key:
+    description: >-
+      OpenAI API key. Optional. Without it the review still runs and reports deterministic rule results
+      only; everything a model would have judged is reported as insufficient evidence.
+    required: false
+    default: ""
+  rules:
+    description: Path to a rules file, relative to the repository root. Ignored when the file is absent.
+    required: false
+    default: .cerno.toml
+  fail-on-findings:
+    description: Fail the job when the review shows at least one finding. Errors always fail the job.
+    required: false
+    default: "false"
+  output:
+    description: Where to write the JSON result, relative to the repository root.
+    required: false
+    default: cerno-review.json
+
+outputs:
+  result-file:
+    description: Absolute path of the JSON result.
+    value: ${{ steps.review.outputs.result-file }}
+  exit-code:
+    description: Exit code of `cerno review` (0 = no shown findings, 1 = at least one).
+    value: ${{ steps.review.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+
+    - name: Install cerno
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: uv sync --frozen --project "$ACTION_PATH"
+
+    - name: Review the diff
+      id: review
+      shell: bash
+      # Event values reach the script through the environment, never through ${{ }} inside the script:
+      # a branch or title could otherwise inject shell.
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        RULES: ${{ inputs.rules }}
+        OUTPUT: ${{ inputs.output }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+      run: |
+        set -uo pipefail
+        if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+          echo "cerno-review only supports the pull_request event; no base/head commit in this event." >&2
+          exit 2
+        fi
+        out="$GITHUB_WORKSPACE/$OUTPUT"
+        args=(review --repo "$GITHUB_WORKSPACE" --base "$BASE_SHA" --head "$HEAD_SHA"
+              --no-checks --format json --out "$out")
+        if [ -n "$RULES" ] && [ -f "$GITHUB_WORKSPACE/$RULES" ]; then
+          args+=(--rules "$GITHUB_WORKSPACE/$RULES")
+        fi
+        # --no-checks is fixed: the Action must not run scripts from the pull request.
+        uv run --project "$ACTION_PATH" cerno "${args[@]}"
+        status=$?
+        echo "exit-code=$status" >> "$GITHUB_OUTPUT"
+        echo "result-file=$out" >> "$GITHUB_OUTPUT"
+        if [ -f "$out" ]; then
+          uv run --project "$ACTION_PATH" python -m cerno.report.markdown "$out" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "cerno review wrote no result (exit $status)." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ "$status" -ge 2 ]; then
+          echo "cerno review failed with exit code $status." >&2
+          exit "$status"
+        fi
+        if [ "$status" -eq 1 ] && [ "$FAIL_ON_FINDINGS" = "true" ]; then
+          echo "cerno review reported findings and fail-on-findings is true." >&2
+          exit 1
+        fi
+        exit 0

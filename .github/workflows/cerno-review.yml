@@ -1,0 +1,35 @@
+name: cerno review
+
+# pull_request, never pull_request_target: a fork's pull request runs with no secrets and no write
+# access, which is what makes it safe to review untrusted code.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The head commit itself, with full history so merge-base(base, head) resolves.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: review
+        uses: ./
+        with:
+          # Empty on pull requests from forks; the review then reports deterministic results only.
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          rules: .cerno.toml
+          fail-on-findings: "false"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cerno-review
+          path: cerno-review.json
+          if-no-files-found: ignore
