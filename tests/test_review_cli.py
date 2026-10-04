@@ -133,3 +133,21 @@ def test_settings_pick_up_the_price_environment_variables(monkeypatch, tmp_path)
     settings = Settings.load(tmp_path)
     assert (settings.price_input_per_mtok, settings.price_output_per_mtok) == (1.25, 10.0)
     assert settings.request_timeout == 45.0
+
+
+def test_md_and_pr_exit_two_when_their_module_cannot_be_imported(review_repo, monkeypatch):
+    """Both paths import lazily, so a missing module must be exit 2, never a traceback."""
+    import builtins
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    real = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name.startswith(("cerno.report", "cerno.github")):
+            raise ImportError(f"No module named {name!r}")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    for args in (["--format", "md", "--no-checks"], ["--pr", "7"]):
+        result = runner.invoke(app, ["review", "--repo", str(review_repo), *args])
+        assert result.exit_code == 2
