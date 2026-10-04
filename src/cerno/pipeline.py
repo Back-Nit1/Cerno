@@ -15,7 +15,7 @@ from cerno.capture.transcript import extract_claims, final_assistant_text
 from cerno.config import Settings, db_file
 from cerno.evidence.store import EvidenceStore
 from cerno.intent.compiler import compile_intent_timeline
-from cerno.llm.openai import LLM
+from cerno.llm.openai import LLM, ProviderError
 from cerno.models import AgentClaim, ChangeAssessment, HookEvent, Session, UsageStats, Verdict
 from cerno.storage.sqlite import DB
 from cerno.verification.agent import verify_with_agent
@@ -126,7 +126,7 @@ def build_context(root: Path, session_id: str, settings: Settings, db: DB, contr
                    symbols, base_index, final_index, events, contract)
 
 
-def verify_requirement(llm: LLM, ctx: Context, req) -> Verdict:
+def verify_requirement(llm: LLM, ctx: Context, req, instructions: str | None = None) -> Verdict:
     try:
         rules = apply_rules(req, ctx)
         if rules.verdict is not None:
@@ -135,7 +135,10 @@ def verify_requirement(llm: LLM, ctx: Context, req) -> Verdict:
         packet = build_packet(req, ctx, candidates, rules.evidence_ids)
         plan = rules.plan + ["retrieval: rank changed symbols and bounded impact neighborhood",
                              "agent: bounded tool-use investigation"]
-        return verify_with_agent(llm, ctx, req, packet, rules.evidence_ids, plan)
+        kwargs = {"instructions": instructions} if instructions else {}
+        return verify_with_agent(llm, ctx, req, packet, rules.evidence_ids, plan, **kwargs)
+    except ProviderError:
+        raise  # a bad key or an unreachable provider is an operator error, not "insufficient evidence"
     except Exception as exc:  # one requirement failing must not sink the session
         return uncertain(req.id, f"Verification error: {type(exc).__name__}: {exc}", ["a successful investigation run"])
 

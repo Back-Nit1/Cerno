@@ -156,6 +156,14 @@ class TraceStep(BaseModel):
     evidence_ids: list[str] = []
 
 
+class CodeLocation(BaseModel):
+    """Where a verdict says the problem is. Validated against the diff before it is trusted."""
+
+    path: str
+    line: int
+    end_line: int
+
+
 class Verdict(BaseModel):
     requirement_id: str
     status: Status
@@ -168,6 +176,7 @@ class Verdict(BaseModel):
     plan: str = ""
     trace: list[TraceStep] = []
     cached: bool = False
+    locations: list[CodeLocation] = []  # optional; empty keeps pre-existing stored verdicts valid
 
 
 class ChangeAssessment(BaseModel):

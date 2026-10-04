@@ -24,6 +24,11 @@ def _tool(name: str, description: str, **props: dict) -> dict:
 
 
 STR, INT = {"type": "string"}, {"type": "integer"}
+LOCATIONS = {
+    "type": "array",
+    "items": {"type": "object", "additionalProperties": False, "required": ["path", "line", "end_line"],
+              "properties": {"path": STR, "line": INT, "end_line": INT}},
+}
 TOOLS = [
     _tool("get_requirement", "Get one requirement from the Intent Contract.", requirement_id=STR),
     _tool("get_changed_files", "List files changed between the session baseline and final snapshot."),
@@ -43,12 +48,15 @@ TOOLS = [
     _tool("get_evidence", "Full stored content of one evidence item.", evidence_id=STR),
     _tool(
         "submit_verdict",
-        "Submit the final verdict for the requirement. Cite evidence ids returned by tools or the packet.",
+        "Submit the final verdict for the requirement. Cite evidence ids returned by tools or the packet. "
+        "locations: the changed lines the problem is at (empty when the verdict is not about specific lines); "
+        "a location outside the diff is dropped.",
         status={"type": "string", "enum": ["VERIFIED", "LIKELY", "UNCERTAIN", "VIOLATED"]},
         evidence_level={"type": "string", "enum": ["runtime", "test", "structural", "semantic", "insufficient"]},
         summary=STR,
         evidence_ids={"type": "array", "items": STR},
         missing_evidence={"type": "array", "items": STR},
+        locations=LOCATIONS,
     ),
 ]
 

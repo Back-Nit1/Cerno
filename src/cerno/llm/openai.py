@@ -6,6 +6,18 @@ from datetime import UTC, datetime
 from cerno.config import Settings
 from cerno.storage.sqlite import DB
 
+# Provider failures that are the *operator's* problem, not a gap in the evidence. Matched by class name so
+# this module keeps working without importing the (slow) openai package.
+FATAL_ERRORS = {"AuthenticationError", "PermissionDeniedError", "APIConnectionError", "APITimeoutError"}
+
+
+class ProviderError(RuntimeError):
+    """Authentication or connection failure talking to the model provider. Never an UNCERTAIN verdict."""
+
+
+def _is_fatal(exc: Exception) -> bool:
+    return any(cls.__name__ in FATAL_ERRORS for cls in type(exc).__mro__)
+
 
 class LLM:
     def __init__(self, settings: Settings, db: DB | None = None, session_id: str | None = None, client=None):
@@ -14,7 +26,7 @@ class LLM:
         if client is None and settings.api_key:
             from openai import OpenAI  # slow import; hooks never need it
 
-            client = OpenAI(api_key=settings.api_key, max_retries=3)
+            client = OpenAI(api_key=settings.api_key, max_retries=3, timeout=settings.request_timeout)
         self.client = client
         self.input_tokens = self.output_tokens = self.cache_read_tokens = self.calls = 0
 
@@ -22,19 +34,27 @@ class LLM:
     def available(self) -> bool:
         return self.client is not None
 
+    def _create_raw(self, **kwargs):
+        try:
+            return self.client.responses.create(model=self.model, **kwargs)
+        except Exception as exc:
+            if _is_fatal(exc):
+                raise ProviderError(f"{type(exc).__name__}: {exc}") from exc
+            raise
+
     def create(self, purpose: str, **kwargs):
         if self.client is None:
             raise RuntimeError("model unavailable: OPENAI_API_KEY is not set")
         kwargs.setdefault("store", False)
         kwargs.setdefault("include", ["reasoning.encrypted_content"])
         try:
-            response = self.client.responses.create(model=self.model, **kwargs)
+            response = self._create_raw(**kwargs)
         except Exception as exc:
             # Some models/accounts may reject strict schemas; retain a best-effort fallback.
             if "strict" not in str(exc).lower() or not kwargs.get("tools"):
                 raise
             kwargs["tools"] = [{**tool, "strict": False} for tool in kwargs["tools"]]
-            response = self.client.responses.create(model=self.model, **kwargs)
+            response = self._create_raw(**kwargs)
         usage = getattr(response, "usage", None)
         details = getattr(usage, "input_tokens_details", None)
         row = {

@@ -9,6 +9,7 @@ classification happens here, during `cerno analyze` — never in hooks, which ma
 """
 
 import hashlib
+import json
 import re
 
 from pydantic import ValidationError
@@ -20,6 +21,11 @@ from cerno.privacy import redact
 from cerno.storage.sqlite import DB
 
 MAX_REQUIREMENTS = 10
+
+def _digest(*parts) -> str:
+    """Cache key material: the prompt text plus the system prompt and tool schema that produced it."""
+    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+
 
 SYSTEM = """You compile a developer's request to a coding agent into an Intent Contract.
 Rules:
@@ -82,7 +88,7 @@ def compile_intent(llm: LLM, prompts: list[str], db: DB | None = None) -> tuple[
     text = "\n\n".join(p.strip() for p in prompts if p.strip())
     if not text:
         return IntentContract(task_summary="(no developer prompt captured)", requirements=[]), "none"
-    key = f"intent:{llm.model}:{hashlib.sha1(text.encode()).hexdigest()}"
+    key = f"intent:{llm.model}:{_digest(text, SYSTEM, INTENT_TOOL)}"
     if db is not None and (hit := db.cache_get(key)):
         return IntentContract.model_validate(hit), "model"
     if llm.available:
@@ -262,7 +268,7 @@ def compile_intent_timeline(llm: LLM, prompts: list[PromptRecord],
     if not meaningful:
         return IntentContract(task_summary="(no developer prompt captured)", requirements=[]), prompts, "none"
     text = "\n\n".join(f"[P{p.seq}] {p.text.strip()}" for p in meaningful)
-    key = f"timeline:{llm.model}:{hashlib.sha1(text.encode()).hexdigest()}"
+    key = f"timeline:{llm.model}:{_digest(text, TIMELINE_SYSTEM, TIMELINE_TOOL)}"
     if db is not None and (hit := db.cache_get(key)):
         contract = IntentContract.model_validate(hit["contract"])
         _, classified = parse_timeline(hit["raw"], prompts)
