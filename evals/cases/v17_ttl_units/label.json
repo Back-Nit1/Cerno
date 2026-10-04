@@ -1,0 +1,1 @@
+{"split":"heldout","kind":"violation","language":"js","needs_context":true,"expected":[{"rule_id":"CERNO-BEHAVIOR","path":"lib/config.mjs","line_start":1,"line_end":1,"why":"The unchanged cache caller multiplies TTL_SECONDS by 1000, turning five minutes into about 83 hours."}]}

@@ -1,0 +1,1 @@
+{"split":"dev","kind":"violation","language":"js","needs_context":true,"expected":[{"rule_id":"CERNO-CONTRACT","path":"lib/user.mjs","line_start":2,"line_end":2,"why":"The unchanged greeting caller still reads name, so renaming the return fields breaks it."}]}
