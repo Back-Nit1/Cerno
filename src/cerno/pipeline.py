@@ -126,10 +126,13 @@ def build_context(root: Path, session_id: str, settings: Settings, db: DB, contr
                    symbols, base_index, final_index, events, contract)
 
 
-def verify_requirement(llm: LLM, ctx: Context, req, instructions: str | None = None) -> Verdict:
+def verify_requirement(llm: LLM, ctx: Context, req, instructions: str | None = None,
+                       settle: bool = True) -> Verdict:
+    """settle=False keeps the deterministic rules as *evidence* but lets the agent decide: the session-shaped
+    heuristics in deterministic.py are not safe arbiters of a review rule."""
     try:
         rules = apply_rules(req, ctx)
-        if rules.verdict is not None:
+        if settle and rules.verdict is not None:
             return finalize(rules.verdict.model_copy(update={"plan": " -> ".join(rules.plan)}), ctx.store)
         candidates = rank(req, ctx)
         packet = build_packet(req, ctx, candidates, rules.evidence_ids)
