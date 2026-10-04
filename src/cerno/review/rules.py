@@ -12,6 +12,8 @@ from pathlib import Path
 from cerno.review.models import SEVERITY_ORDER, ReviewRule
 
 RULES_FILE = ".cerno.toml"
+MAX_FILE_RULES = 50  # every rule is a bounded model investigation; an unbounded list is an unbounded bill
+MAX_RULE_CHARS = 2000
 SEVERITIES = tuple(SEVERITY_ORDER)
 
 SCOPE = (
@@ -127,17 +129,31 @@ def _str_list(data: dict, key: str, where: str) -> list[str]:
     return value
 
 
-def load_rules(root: Path, rules_path: Path | None = None) -> RuleSet:
-    """Built-in pack plus `.cerno.toml`. Raises RulesError for anything malformed."""
+def load_rules(root: Path, rules_path: Path | None = None, base_tree: str | None = None) -> RuleSet:
+    """Built-in pack plus `.cerno.toml`. Raises RulesError for anything malformed.
+
+    With `base_tree`, a repository-relative rules file is read from that tree instead of the disk: the
+    change under review must not be able to switch off or rewrite the rules it is judged by."""
     explicit = rules_path is not None
     path = rules_path or root / RULES_FILE
-    if not path.is_file():
-        if explicit:
+    text = None
+    if base_tree is not None and not (explicit and path.is_absolute() and root not in path.parents):
+        from cerno.analysis import git
+
+        rel = path.relative_to(root).as_posix() if path.is_absolute() else path.as_posix()
+        text, path = git.read_blob(root, base_tree, rel), root / rel
+    elif path.is_file():
+        try:
+            text = path.read_text()
+        except OSError as exc:
+            raise RulesError(f"{path}: {exc}") from exc
+    if text is None:
+        if explicit and base_tree is None:
             raise RulesError(f"{path}: rules file not found")
         return RuleSet(list(BUILTIN), "high", ["builtin"])
     try:
-        data = tomllib.loads(path.read_text())
-    except (tomllib.TOMLDecodeError, OSError) as exc:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
         raise RulesError(f"{path}: {exc}") from exc
 
     where = f"{path} [review]"
@@ -154,11 +170,15 @@ def load_rules(root: Path, rules_path: Path | None = None) -> RuleSet:
     entries = data.get("rule", [])
     if not isinstance(entries, list):
         raise RulesError(f"{path}: '[[rule]]' must be an array of tables")
+    if len(entries) > MAX_FILE_RULES:
+        raise RulesError(f"{path}: {len(entries)} rules; at most {MAX_FILE_RULES} are allowed")
     for n, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             raise RulesError(f"{path} [[rule]] #{n}: must be a table")
         spot = f"{path} [[rule]] #{n}"
         rule_id = _str(entry, "id", spot, required=True)
+        if len(_str(entry, "text", f"{spot} ({rule_id})", required=True)) > MAX_RULE_CHARS:
+            raise RulesError(f"{spot} ({rule_id}): 'text' is longer than {MAX_RULE_CHARS} characters")
         rules.append(ReviewRule(
             id=rule_id, text=_str(entry, "text", f"{spot} ({rule_id})", required=True),
             severity=_severity(_str(entry, "severity", f"{spot} ({rule_id})"), f"{spot} ({rule_id})", "high"),

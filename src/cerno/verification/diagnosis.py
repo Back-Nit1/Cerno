@@ -56,7 +56,8 @@ def now() -> str:
 def candidate_commits(root: Path, db: DB, repo_id: str, good: str | None, bad: str | None,
                       since: str | None, until: str | None) -> list[CommitRecord]:
     if good and bad:
-        hashes = [h for h in git.git(root, "rev-list", f"{good}..{bad}", check=False).split() if h]
+        hashes = [h for h in git.git(root, "rev-list", f"{git.safe_ref(good)}..{git.safe_ref(bad)}",
+                                     check=False).split() if h]
         commits = [c for h in hashes if (c := history.get_commit(db, repo_id, h))]
         return sorted(commits, key=lambda c: c.seq, reverse=True)
     rows = sorted((CommitRecord.model_validate(r) for r in db.list("commits", repo_id)),

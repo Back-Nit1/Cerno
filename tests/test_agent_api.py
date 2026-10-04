@@ -95,7 +95,7 @@ def test_agent_pure_opinion_cannot_verify(demo):
 
 
 def test_api_endpoints(demo):
-    client = TestClient(create_app(demo.root))
+    client = TestClient(create_app(demo.root), base_url="http://127.0.0.1")
     sid = demo.session_id
     assert client.get("/api/health").json()["status"] == "ok"
     sessions = client.get("/api/sessions").json()

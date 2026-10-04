@@ -36,6 +36,9 @@ def staged_tree(root: Path) -> str:
 
 def resolve(root: Path, base: str = "main", head: str | None = None, staged: bool = False) -> Revisions:
     """Raises git.GitError (with git's own message) for an unresolvable ref."""
+    git.safe_ref(base)
+    if head is not None:
+        git.safe_ref(head)
     if staged:
         head_sha = git.get_head(root)
         base_rev = Revision(ref="HEAD", sha=head_sha, tree=git.head_tree(root))

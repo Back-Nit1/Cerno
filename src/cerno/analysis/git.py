@@ -33,6 +33,13 @@ def git(root: Path, *args: str, env: dict | None = None, check: bool = True) -> 
     return proc.stdout
 
 
+def safe_ref(ref: str) -> str:
+    """A ref that reaches git from outside (CLI flag, HTTP body) must not be readable as an option."""
+    if not ref or ref.startswith("-") or any(c.isspace() or ord(c) < 32 for c in ref):
+        raise GitError(f"refusing unsafe git ref {ref!r}")
+    return ref
+
+
 def get_repository_root(path: Path) -> Path | None:
     try:
         return Path(git(path, "rev-parse", "--show-toplevel").strip())

@@ -29,7 +29,7 @@ def history_router(root: Path, db: DB, settings: Settings) -> APIRouter:
 
     @r.post("/index")
     def reindex(limit: int = 2000):
-        return hist.index(root, db, limit=limit).model_dump()
+        return hist.index(root, db, limit=max(1, min(limit, 2000))).model_dump()
 
     @r.get("/commits")
     def commits(limit: int = 50, before_seq: int | None = None, first_parent: bool = False):
@@ -59,7 +59,7 @@ def history_router(root: Path, db: DB, settings: Settings) -> APIRouter:
         from cerno.analysis.symbols import changed_symbols
         from cerno.models import FileChange
 
-        commits = sorted(hist.path_history(db, repo_id, path), key=lambda c: c.seq)[-limit:]
+        commits = sorted(hist.path_history(db, repo_id, path), key=lambda c: c.seq)[-max(1, min(limit, PAGE_MAX)):]
         cache: dict[str, RepoIndex] = {}
 
         def idx(ref: str) -> RepoIndex:
@@ -103,7 +103,11 @@ def history_router(root: Path, db: DB, settings: Settings) -> APIRouter:
     @r.post("/markers")
     def add_marker(body: dict):
         commit = body.get("commit")
-        resolved = (git.git(root, "rev-parse", commit, check=False).strip() or commit) if commit else None
+        try:
+            resolved = (git.git(root, "rev-parse", git.safe_ref(str(commit)), check=False).strip() or commit) \
+                if commit else None
+        except git.GitError as exc:
+            raise HTTPException(400, str(exc)) from exc
         marker = hist.add_marker(db, repo_id, body["kind"], resolved, body.get("description", body["kind"]),
                                 body.get("metadata"))
         return marker.model_dump()
@@ -122,6 +126,12 @@ def history_router(root: Path, db: DB, settings: Settings) -> APIRouter:
 
     @r.post("/diagnose")
     def diagnose_endpoint(body: dict):
+        try:
+            for key in ("good", "bad"):
+                if body.get(key):
+                    git.safe_ref(str(body[key]))
+        except git.GitError as exc:
+            raise HTTPException(400, str(exc)) from exc
         result = run_diagnose_(
             root, db, settings, good=body.get("good"), bad=body.get("bad"), since=body.get("since"),
             until=body.get("until"), query=body.get("query"), suspected_path=body.get("file"),

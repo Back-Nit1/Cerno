@@ -174,10 +174,19 @@ def review(repo: Path | None = REPO,
             else:
                 base, head = resolved
         revisions = resolve(root, base=base, head=head, staged=staged)
-        ruleset = load_rules(root, rules)
+        # An explicit head (a branch, a PR) is someone else's change: judge it by the base's rules.
+        ruleset = load_rules(root, rules, base_tree=revisions.base.tree if head is not None else None)
+        db_path = db_file(root, settings)
+        if root in db_path.parents and git.git(root, "ls-files", "--", str(db_path.relative_to(root)), check=False).strip():
+            raise GitError(f"{db_path} is committed to the repository; refusing to use it as the verdict cache")
     except (GitError, RulesError, OSError, ImportError) as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(2) from exc
+    if head is not None and not no_checks:
+        # Checks execute the working tree, which is not the revision under review.
+        typer.secho("--head/--pr given: project checks are skipped (they would run the working tree).",
+                    fg="yellow", err=True)
+        no_checks = True
     if not settings.api_key:
         typer.secho("OPENAI_API_KEY not set: deterministic evidence only; rules report as insufficient.",
                     fg="yellow", err=True)
@@ -251,13 +260,19 @@ def timeline(session_id: str | None = typer.Argument(None), repo: Path | None = 
 
 
 @app.command()
-def dashboard(repo: Path | None = REPO, host: str = "127.0.0.1", port: int = 8000):
+def dashboard(repo: Path | None = REPO, host: str = "127.0.0.1", port: int = 8000,
+              allow_remote: bool = typer.Option(False, "--allow-remote",
+                                                help="Permit a non-loopback --host. The API has no authentication.")):
     """Serve the API (and the built UI from ui/dist if present)."""
     import uvicorn
 
-    from cerno.api.app import create_app
+    from cerno.api.app import LOOPBACK, create_app
 
-    uvicorn.run(create_app(_root(repo)), host=host, port=port)
+    if host not in LOOPBACK and not allow_remote:
+        typer.secho(f"refusing to bind {host}: the dashboard has no authentication and can start analyses "
+                    "that spend your API key. Pass --allow-remote if you really mean it.", fg="red", err=True)
+        raise typer.Exit(2)
+    uvicorn.run(create_app(_root(repo), allowed_hosts=[host]), host=host, port=port)
 
 
 @app.command()
@@ -336,7 +351,7 @@ def history_markers(repo: Path | None = REPO,
     db = _db(root)
     repo_id = hist.repo_id_for(root)
     if add:
-        resolved = git.git(root, "rev-parse", commit, check=False).strip() or commit if commit else None
+        resolved = git.git(root, "rev-parse", git.safe_ref(commit), check=False).strip() or commit if commit else None
         marker = hist.add_marker(db, repo_id, add, resolved, description or add)
         typer.echo(f"recorded {marker.id}: {marker.kind} @ {marker.commit or '(no commit)'}")
         return

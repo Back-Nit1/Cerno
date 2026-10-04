@@ -36,7 +36,7 @@ def _schema() -> str:
 
 class DB:
     def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # prompts and payloads live here
         self.conn = sqlite3.connect(path, check_same_thread=False, timeout=10)
         self.lock = threading.Lock()
         with self.lock:
