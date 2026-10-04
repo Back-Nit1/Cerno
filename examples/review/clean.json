@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "base": {
+    "ref": "main",
+    "sha": "9f1c2e8a7b3d4c5e6f708192a3b4c5d6e7f80912",
+    "tree": "c1d9f0b2a3847566e9d0c1b2a3948576e1f2d3c4"
+  },
+  "head": {
+    "ref": "chore/rename-helper",
+    "sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+    "tree": "7e6d5c4b3a2918370f1e2d3c4b5a69788796a5b4"
+  },
+  "merge_base": "9f1c2e8a7b3d4c5e6f708192a3b4c5d6e7f80912",
+  "model": "gpt-5.6-luna",
+  "rules_source": ["builtin"],
+  "findings": [],
+  "insufficient": [],
+  "rules": [
+    {"id": "CERNO-CONTRACT", "text": "Breaks an existing caller or public API contract.", "severity": "critical", "source": "builtin", "verdict": "VERIFIED"},
+    {"id": "CERNO-AUTHZ", "text": "Removes or weakens an authentication, permission or validation check.", "severity": "critical", "source": "builtin", "verdict": "VERIFIED"},
+    {"id": "CERNO-DATA-EXPOSURE", "text": "Secrets, personal data or unfiltered records reach logs, responses or other tenants.", "severity": "critical", "source": "builtin", "verdict": "VERIFIED"},
+    {"id": "CERNO-DESTRUCTIVE", "text": "Destructive data or schema change.", "severity": "critical", "source": "builtin", "verdict": "SKIPPED"},
+    {"id": "CERNO-BEHAVIOR", "text": "Changes existing behaviour outside the apparent purpose of the diff.", "severity": "high", "source": "builtin", "verdict": "VERIFIED"}
+  ],
+  "checks": [
+    {"kind": "test", "command": "npm run test", "exit_code": 0, "duration_s": 3.4},
+    {"kind": "lint", "command": "npm run lint", "exit_code": 0, "duration_s": 0.8}
+  ],
+  "usage": {
+    "wall_time_s": 11.6,
+    "model_calls": 6,
+    "input_tokens": 18422,
+    "output_tokens": 1130,
+    "cache_read_tokens": 12288,
+    "cost_usd": null
+  },
+  "errors": []
+}

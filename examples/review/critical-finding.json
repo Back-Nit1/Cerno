@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "base": {
+    "ref": "main",
+    "sha": "9f1c2e8a7b3d4c5e6f708192a3b4c5d6e7f80912",
+    "tree": "c1d9f0b2a3847566e9d0c1b2a3948576e1f2d3c4"
+  },
+  "head": {
+    "ref": "feat/password-reset",
+    "sha": "5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+    "tree": "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e"
+  },
+  "merge_base": "9f1c2e8a7b3d4c5e6f708192a3b4c5d6e7f80912",
+  "model": "gpt-5.6-luna",
+  "rules_source": ["builtin", ".cerno.toml"],
+  "findings": [
+    {
+      "id": "a3f91c20b7d4",
+      "rule_id": "CERNO-AUTHZ",
+      "title": "Password reset accepts an expired reset_token",
+      "severity": "critical",
+      "status": "confirmed",
+      "shown": true,
+      "suppressed_reason": null,
+      "path": "src/auth/reset.js",
+      "line": 34,
+      "end_line": 41,
+      "explanation": "consumeToken in src/auth/reset.js no longer compares record.expires_at against Date.now(), so any token ever issued keeps working. The expiry constant RESET_TTL_MS is now unused.",
+      "next_action": "Restore the expiry comparison in consumeToken before the password write, and re-enable test/reset.test.js:\"rejects an expired token\".",
+      "evidence": [
+        {
+          "id": "E-test-01",
+          "type": "check_test",
+          "level": "test",
+          "path": "test/reset.test.js",
+          "line_start": 48,
+          "summary": "npm run test: 1 failing - \"rejects an expired token\" expected 400, received 200."
+        },
+        {
+          "id": "E-struct-02",
+          "type": "caller_graph",
+          "level": "structural",
+          "path": "src/auth/reset.js",
+          "line_start": 34,
+          "summary": "consumeToken is reached from the unauthenticated POST /auth/reset/confirm route in src/server/routes.js:88."
+        },
+        {
+          "id": "E-rule-03",
+          "type": "rule_hit",
+          "level": "rule",
+          "path": null,
+          "line_start": 1,
+          "summary": "File rule glob src/auth/** matched; RESET_TTL_MS became unreferenced in this diff."
+        }
+      ]
+    },
+    {
+      "id": "7b02ea5d41cc",
+      "rule_id": "CERNO-BEHAVIOR",
+      "title": "Rate limit window widened from 60s to 900s",
+      "severity": "medium",
+      "status": "suspected",
+      "shown": false,
+      "suppressed_reason": "severity medium is below min_severity high",
+      "path": "src/auth/rateLimit.js",
+      "line": 7,
+      "end_line": 7,
+      "explanation": "WINDOW_MS changed from 60_000 to 900_000, which also loosens the login throttle, not only the reset throttle this diff targets.",
+      "next_action": "Confirm the login throttle is meant to change too, or give the reset flow its own window.",
+      "evidence": [
+        {
+          "id": "E-diff-04",
+          "type": "diff_hunk",
+          "level": "diff",
+          "path": "src/auth/rateLimit.js",
+          "line_start": 7,
+          "summary": "-const WINDOW_MS = 60_000 / +const WINDOW_MS = 900_000"
+        }
+      ]
+    }
+  ],
+  "insufficient": [
+    {
+      "rule_id": "CERNO-DATA-EXPOSURE",
+      "summary": "sendResetMail in src/auth/mailer.js logs its whole payload, but the logger sink is configured outside this repository.",
+      "missing_evidence": [
+        "where logger.info writes in production",
+        "whether the payload still contains reset_token at that point"
+      ]
+    }
+  ],
+  "rules": [
+    {"id": "CERNO-CONTRACT", "text": "Breaks an existing caller or public API contract.", "severity": "critical", "source": "builtin", "verdict": "VERIFIED"},
+    {"id": "CERNO-AUTHZ", "text": "Removes or weakens an authentication, permission or validation check.", "severity": "critical", "source": "builtin", "verdict": "VIOLATED"},
+    {"id": "CERNO-DATA-EXPOSURE", "text": "Secrets, personal data or unfiltered records reach logs, responses or other tenants.", "severity": "critical", "source": "builtin", "verdict": "UNCERTAIN"},
+    {"id": "CERNO-DESTRUCTIVE", "text": "Destructive data or schema change.", "severity": "critical", "source": "builtin", "verdict": "SKIPPED"},
+    {"id": "CERNO-BEHAVIOR", "text": "Changes existing behaviour outside the apparent purpose of the diff.", "severity": "medium", "source": "builtin", "verdict": "VIOLATED"},
+    {"id": "AUTH-001", "text": "Reset tokens must be single use and expire within 15 minutes.", "severity": "critical", "source": "file", "verdict": "VIOLATED"}
+  ],
+  "checks": [
+    {"kind": "test", "command": "npm run test", "exit_code": 1, "duration_s": 4.1}
+  ],
+  "usage": {
+    "wall_time_s": 42.8,
+    "model_calls": 14,
+    "input_tokens": 96431,
+    "output_tokens": 5207,
+    "cache_read_tokens": 71680,
+    "cost_usd": 0.182
+  },
+  "errors": []
+}
