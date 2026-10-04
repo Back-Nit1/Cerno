@@ -1,0 +1,4 @@
+MIGRATIONS = [
+    "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+    "ALTER TABLE users ADD COLUMN avatar_url TEXT",
+]

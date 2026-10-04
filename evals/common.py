@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -60,7 +61,7 @@ def project_test_command(root: Path) -> list[str]:
     if (root / "package.json").is_file():
         return ["npm", "test"]
     if (root / "pyproject.toml").is_file():
-        return ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
+        return [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]
     raise ValueError(f"cannot infer test command for {root}")
 
 
