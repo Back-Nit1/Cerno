@@ -1,6 +1,7 @@
 """Allowlisted project checks. Commands come only from detected project configuration, never from the model."""
 
 import json
+import os
 import subprocess
 import time
 import tomllib
@@ -9,6 +10,14 @@ from pathlib import Path
 from cerno.models import CheckKind, CheckResult
 
 TAIL_CHARS = 2000
+SECRET_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
+SECRET_ENV_NAMES = {"API_KEY", "TOKEN", "SECRET", "PASSWORD"}
+
+
+def child_env() -> dict[str, str]:
+    """A reviewed branch's own test script must not be able to read the reviewer's credentials."""
+    return {k: v for k, v in os.environ.items()
+            if not (k.upper().endswith(SECRET_ENV_SUFFIXES) or k.upper() in SECRET_ENV_NAMES)}
 
 
 def detect_project_types(root: Path) -> list[str]:
@@ -58,7 +67,7 @@ def run_check(root: Path, kind: CheckKind, timeout: int = 300) -> CheckResult | 
     start = time.monotonic()
     try:
         proc = subprocess.run(command, cwd=root, capture_output=True, text=True, errors="replace", timeout=timeout,
-                              shell=False, env=None)
+                              shell=False, env=child_env())
         code, out, err = proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
         code, out, err = None, str(exc.stdout or ""), f"timed out after {timeout}s"

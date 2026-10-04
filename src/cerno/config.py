@@ -15,6 +15,9 @@ class Settings(BaseModel):
     max_snippet_lines: int = 120
     max_search_results: int = 8
     check_timeout: int = 300
+    request_timeout: float = 120.0  # per model request, seconds
+    price_input_per_mtok: float | None = None  # user-supplied prices only; never guessed
+    price_output_per_mtok: float | None = None
     db_path: str = f"{CERNO_DIR}/cerno.db"
     log_level: str = "INFO"
     api_key: str | None = None
@@ -35,6 +38,9 @@ class Settings(BaseModel):
             "max_snippet_lines": "CERNO_MAX_SNIPPET_LINES",
             "max_search_results": "CERNO_MAX_SEARCH_RESULTS",
             "check_timeout": "CERNO_CHECK_TIMEOUT",
+            "request_timeout": "CERNO_REQUEST_TIMEOUT",
+            "price_input_per_mtok": "CERNO_PRICE_INPUT_PER_MTOK",
+            "price_output_per_mtok": "CERNO_PRICE_OUTPUT_PER_MTOK",
             "db_path": "CERNO_DB_PATH",
             "log_level": "CERNO_LOG_LEVEL",
             "api_key": "OPENAI_API_KEY",

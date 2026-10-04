@@ -38,6 +38,7 @@ class Context:
     events: list[HookEvent]
     contract: IntentContract
     checks: dict[str, CheckResult] = field(default_factory=dict)
+    no_checks: bool = False  # when set, no repository script is ever executed
     inspected_files: set[str] = field(default_factory=set)
     inspected_symbols: set[str] = field(default_factory=set)
     requirement_files: set[str] = field(default_factory=set)
@@ -61,6 +62,11 @@ class Context:
             self._diffs[path] = redact(git.get_file_diff(self.root, self.base_tree, self.final_tree, path))
         return self._diffs[path]
 
+    def changed_ranges(self, path: str) -> list[tuple[int, int]]:
+        """Line ranges touched by the diff, in head-side numbering."""
+        return [(h["new_start"], h["new_start"] + max(h["new_len"], 1) - 1)
+                for h in git.get_diff_hunks(self.diff(path))]
+
     def touch(self, path: str | None = None, symbol: str | None = None) -> None:
         if path:
             self.inspected_files.add(path)
@@ -75,6 +81,8 @@ class Context:
         return text
 
     def check(self, kind: str) -> CheckResult | None:
+        if self.no_checks:
+            return None
         if kind in self.checks:
             return self.checks[kind]
         result = run_check(self.root, kind, self.settings.check_timeout)

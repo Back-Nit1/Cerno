@@ -53,22 +53,33 @@ def _compact(items: list[dict]) -> None:
             item["output"] = text.splitlines()[0][:200] + " ... (elided)"
 
 
-def _cache_key(llm: LLM, ctx: Context, req: Requirement, packet: str) -> str:
+def _cache_key(llm: LLM, ctx: Context, req: Requirement, packet: str, instructions: str) -> str:
+    """Prompt text and tool schemas are part of the key: editing either must invalidate stored verdicts."""
     checks = sorted((k, c.exit_code) for k, c in ctx.checks.items())
-    material = [llm.model, req.model_dump(), ctx.base_tree, ctx.final_tree, packet, checks, SYSTEM_PROMPT,
+    material = [llm.model, req.model_dump(), ctx.base_tree, ctx.final_tree, packet, checks, instructions, TOOLS,
                 ctx.settings.max_tool_steps]
     return "verdict:" + hashlib.sha1(json.dumps(material, sort_keys=True).encode()).hexdigest()
 
 
+def valid_locations(ctx: Context, verdict: Verdict) -> list:
+    """Drop any location outside a hunk the diff changed: the model's line numbers are never trusted."""
+    kept = []
+    for loc in verdict.locations:
+        ranges = ctx.changed_ranges(loc.path) if ctx.change(loc.path) else []
+        if any(start <= loc.end_line and loc.line <= end for start, end in ranges):
+            kept.append(loc)
+    return kept
+
+
 def verify_with_agent(llm: LLM, ctx: Context, req: Requirement, packet: str, seed_ids: list[str],
-                      plan: list[str]) -> Verdict:
+                      plan: list[str], instructions: str = SYSTEM_PROMPT) -> Verdict:
     plan_text = " -> ".join(plan)
     if not llm.available:
         return uncertain(
             req.id, "Semantic verification unavailable (OPENAI_API_KEY not set); deterministic evidence alone "
             "does not settle this requirement.", ["model reasoning over the evidence packet"], seed_ids, plan=plan_text,
         )
-    key = _cache_key(llm, ctx, req, packet)
+    key = _cache_key(llm, ctx, req, packet, instructions)
     if hit := ctx.db.cache_get(key):
         ctx.store.restore(hit["evidence"])
         return Verdict.model_validate(hit["verdict"]).model_copy(update={"cached": True})
@@ -85,7 +96,7 @@ def verify_with_agent(llm: LLM, ctx: Context, req: Requirement, packet: str, see
     for step in range(max_steps):
         final_turn = step == max_steps - 1
         response = llm.create(
-            "verify", instructions=SYSTEM_PROMPT, tools=TOOLS, input=items, max_output_tokens=1500,
+            "verify", instructions=instructions, tools=TOOLS, input=items, max_output_tokens=1500,
             tool_choice={"type": "function", "name": "submit_verdict"} if final_turn else "auto",
         )
         output = list(getattr(response, "output", ()))
@@ -125,7 +136,7 @@ def verify_with_agent(llm: LLM, ctx: Context, req: Requirement, packet: str, see
                             "model output).", ["conclusive evidence within the investigation budget"], seed_ids)
     verdict = finalize(verdict.model_copy(update={
         "files_inspected": sorted(ctx.requirement_files), "tool_calls_used": ctx.tool_calls - calls_before,
-        "trace": trace, "plan": plan_text,
+        "trace": trace, "plan": plan_text, "locations": valid_locations(ctx, verdict),
     }), ctx.store)
     cited = list(dict.fromkeys(verdict.evidence_ids + seed_ids + [i for s in trace for i in s.evidence_ids]))
     ctx.db.cache_put(key, {"verdict": verdict.model_dump(), "evidence": ctx.store.dump(cited)})

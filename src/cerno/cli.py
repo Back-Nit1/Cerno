@@ -139,6 +139,73 @@ def analyze(session_id: str | None = typer.Argument(None), repo: Path | None = R
 
 
 @app.command()
+def review(repo: Path | None = REPO,
+           base: str = typer.Option("main", "--base", help="Base ref; the diff starts at merge-base(base, head)."),
+           head: str | None = typer.Option(None, "--head", help="Head ref (default: the working tree)."),
+           staged: bool = typer.Option(False, "--staged", help="Review the index against HEAD."),
+           pr: int | None = typer.Option(None, "--pr", help="Resolve base and head from a pull request."),
+           rules: Path | None = typer.Option(None, "--rules", help="Rules file (default: .cerno.toml if present)."),
+           no_checks: bool = typer.Option(False, "--no-checks", help="Never execute repository scripts."),
+           fmt: str = typer.Option("json", "--format", help="json or md."),
+           out: Path | None = typer.Option(None, "--out", help="Write the report to a file instead of stdout.")):
+    """Review a diff and report only problems that could hurt production.
+
+    Exit code 0 = nothing to show, 1 = at least one shown finding, 2 = error."""
+    from cerno.analysis.git import GitError
+    from cerno.llm.openai import ProviderError
+    from cerno.review.engine import run_review
+    from cerno.review.rules import RulesError, load_rules
+    from cerno.review.trees import resolve
+
+    root = _root(repo)
+    settings = Settings.load(root)
+    if fmt not in {"json", "md"}:
+        typer.secho(f"unknown --format {fmt}; expected json or md", fg="red", err=True)
+        raise typer.Exit(2)
+    try:
+        if pr is not None:
+            from cerno.github.pr import resolve_pr
+
+            resolved = resolve_pr(root, pr)  # tolerate dict / object / pair until Agent 2's shape lands
+            if isinstance(resolved, dict):
+                base, head = resolved["base"], resolved["head"]
+            elif hasattr(resolved, "base"):
+                base, head = resolved.base, resolved.head
+            else:
+                base, head = resolved
+        revisions = resolve(root, base=base, head=head, staged=staged)
+        ruleset = load_rules(root, rules)
+    except (GitError, RulesError, OSError, ImportError) as exc:
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(2) from exc
+    if not settings.api_key:
+        typer.secho("OPENAI_API_KEY not set: deterministic evidence only; rules report as insufficient.",
+                    fg="yellow", err=True)
+    try:
+        result = run_review(root, revisions, ruleset, settings, no_checks=no_checks,
+                            on_progress=lambda label: typer.echo(f"\u25cf {label}", err=True))
+    except ProviderError as exc:
+        typer.secho(f"model provider error: {exc}", fg="red", err=True)
+        raise typer.Exit(2) from exc
+
+    if fmt == "md":
+        try:
+            from cerno.report.markdown import render_markdown
+        except ImportError as exc:
+            typer.secho(f"markdown rendering is unavailable: {exc}", fg="red", err=True)
+            raise typer.Exit(2) from exc
+        text = render_markdown(result.model_dump())
+    else:
+        text = json.dumps(result.model_dump(), indent=2)
+    if out:
+        out.write_text(text + "\n")
+        typer.echo(f"wrote {out}", err=True)
+    else:
+        typer.echo(text)
+    raise typer.Exit(1 if result.shown else 0)
+
+
+@app.command()
 def timeline(session_id: str | None = typer.Argument(None), repo: Path | None = REPO,
             as_json: bool = typer.Option(False, "--json", help="Print the timeline as JSON.")):
     """Show the structured prompt timeline for a session, without starting the dashboard.
