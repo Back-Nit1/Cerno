@@ -1,0 +1,1 @@
+{"split":"dev","kind":"violation","language":"js","needs_context":false,"expected":[{"rule_id":"CERNO-AUTHZ","path":"lib/post.mjs","line_start":2,"line_end":2,"why":"The new implementation discards the user instead of enforcing owner or admin permission."}]}

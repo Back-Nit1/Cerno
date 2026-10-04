@@ -1,0 +1,5 @@
+[[rule]]
+id = "PAGE-001"
+text = "Adjacent zero-based pages must not contain duplicate records."
+severity = "high"
+paths = ["page.py"]

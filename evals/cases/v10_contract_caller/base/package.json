@@ -1,0 +1,1 @@
+{"name":"contract-caller","version":"0.0.0","type":"module","scripts":{"test":"node --test"}}

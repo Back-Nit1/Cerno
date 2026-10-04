@@ -1,0 +1,1 @@
+{"split":"heldout","kind":"violation","language":"python","needs_context":true,"expected":[{"rule_id":"CERNO-DATA-EXPOSURE","path":"documents.py","line_start":2,"line_end":3,"why":"The shared documents table requires request-tenant scoping; the new query returns every tenant."}]}

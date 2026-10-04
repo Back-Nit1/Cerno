@@ -1,0 +1,1 @@
+{"split":"dev","kind":"violation","language":"python","needs_context":true,"expected":[{"rule_id":"PAGE-001","path":"page.py","line_start":2,"line_end":2,"why":"The API is zero-based; subtracting one makes pages zero and one return the same records."}]}

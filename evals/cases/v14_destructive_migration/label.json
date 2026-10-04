@@ -1,0 +1,1 @@
+{"split":"dev","kind":"violation","language":"python","needs_context":false,"expected":[{"rule_id":"CERNO-DESTRUCTIVE","path":"schema.py","line_start":3,"line_end":3,"why":"The migration drops the live accounts table and all rows in it."}]}
