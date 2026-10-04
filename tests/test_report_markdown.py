@@ -126,3 +126,113 @@ def test_module_reports_bad_usage_and_unreadable_files():
         )
         assert proc.returncode == 2, proc.stdout
         assert proc.stderr.strip()
+
+
+# --- the engine hands us result.model_dump(), so render the real thing pydantic produces -------------
+
+
+def _dumped_result(severity_type) -> dict:
+    """A pydantic model shaped like the documented JSON, dumped the way the CLI dumps it."""
+    from enum import Enum
+
+    from pydantic import BaseModel
+
+    class Severity(severity_type, Enum):
+        CRITICAL = "critical"
+        HIGH = "high"
+
+    class Evidence(BaseModel):
+        id: str
+        type: str
+        level: str
+        path: str | None
+        line_start: int
+        summary: str
+
+    class Finding(BaseModel):
+        id: str
+        rule_id: str
+        title: str
+        severity: Severity
+        status: str
+        shown: bool
+        suppressed_reason: str | None
+        path: str
+        line: int
+        end_line: int
+        explanation: str
+        next_action: str
+        evidence: list[Evidence]
+
+    class Ref(BaseModel):
+        ref: str | None
+        sha: str | None
+        tree: str
+
+    class Usage(BaseModel):
+        wall_time_s: float
+        model_calls: int
+        input_tokens: int
+        output_tokens: int
+        cache_read_tokens: int
+        cost_usd: float | None
+
+    class ReviewResult(BaseModel):
+        schema_version: int = 1
+        base: Ref
+        head: Ref
+        merge_base: str
+        model: str | None
+        rules_source: list[str]
+        findings: list[Finding]
+        insufficient: list[dict]
+        rules: list[dict]
+        checks: list[dict]
+        usage: Usage
+        errors: list[str]
+
+    def finding(key: str, severity: Severity, shown: bool) -> Finding:
+        return Finding(
+            id=key * 12, rule_id="CERNO-AUTHZ", title=f"{severity.value} problem", severity=severity,
+            status="confirmed", shown=shown, suppressed_reason=None if shown else "below min_severity",
+            path="src/a_b.py", line=4, end_line=4, explanation="drops the check", next_action="restore it",
+            evidence=[Evidence(id="E-1", type="check_test", level="test", path="t.py", line_start=2,
+                               summary="1 failing")],
+        )
+
+    result = ReviewResult(
+        base=Ref(ref="main", sha="9f1c2e8a7b3d", tree="t1"),
+        head=Ref(ref=None, sha=None, tree="t2"),
+        merge_base="9f1c2e8a7b3d", model=None, rules_source=["builtin"],
+        findings=[finding("a", Severity.HIGH, True), finding("b", Severity.CRITICAL, True),
+                  finding("c", Severity.HIGH, False)],
+        insufficient=[], rules=[], checks=[],
+        usage=Usage(wall_time_s=1.0, model_calls=0, input_tokens=0, output_tokens=0,
+                    cache_read_tokens=0, cost_usd=None),
+        errors=[],
+    )
+    return result.model_dump()
+
+
+def test_renders_a_pydantic_model_dump():
+    out = render_markdown(_dumped_result(str))
+    titles = [line[3:] for line in out.splitlines() if line.startswith("## ")]
+    assert titles == ["critical problem", "high problem"]  # most severe first, suppressed one absent
+    assert "Severity." not in out
+    assert "`CERNO-AUTHZ` \u00b7 critical \u00b7 confirmed \u00b7 `src/a_b.py:4`" in out
+    assert "1 finding suppressed" in out
+    assert out.strip().splitlines()[-1].startswith("base `9f1c2e8` \u00b7 head working tree \u00b7 model none")
+
+
+def test_non_str_enum_severities_still_sort_and_render_by_value():
+    from enum import Enum
+
+    class Severity(Enum):
+        CRITICAL = "critical"
+        LOW = "low"
+
+    result = {"findings": [{"title": "second", "severity": Severity.LOW, "shown": True},
+                           {"title": "first", "severity": Severity.CRITICAL, "shown": True}]}
+    out = render_markdown(result)
+    assert [line[3:] for line in out.splitlines() if line.startswith("## ")] == ["first", "second"]
+    assert "critical ·" in out and "Severity." not in out

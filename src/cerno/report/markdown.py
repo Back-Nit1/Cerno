@@ -8,6 +8,7 @@ escaped before it reaches the output.
 import json
 import re
 import sys
+from enum import Enum
 from typing import Any
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -17,9 +18,14 @@ _TRANSLATION = str.maketrans({character: "\\" + character for character in _ESCA
 _BLOCK_START = re.compile(r"\d+[.)] ")
 
 
+def _plain(value: object) -> object:
+    """`model_dump()` keeps enum members: unwrap them so severities sort and render as their value."""
+    return value.value if isinstance(value, Enum) else value
+
+
 def _text(value: object) -> str:
     """Inline prose from repository content: collapse newlines, escape Markdown punctuation."""
-    return str(value).replace("\n", " ").translate(_TRANSLATION)
+    return str(_plain(value)).replace("\n", " ").translate(_TRANSLATION)
 
 
 def _block(value: object) -> str:
@@ -30,7 +36,7 @@ def _block(value: object) -> str:
 
 def _code(value: object) -> str:
     """Inline code span with a backtick fence long enough to survive backticks in the content."""
-    text = str(value).replace("\n", " ")
+    text = str(_plain(value)).replace("\n", " ")
     fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
     pad = " " if text.startswith("`") or text.endswith("`") else ""
     return f"{fence}{pad}{text}{pad}{fence}"
@@ -112,7 +118,7 @@ def render_markdown(result: dict[str, Any]) -> str:
     """Render a review result for a reviewer deciding whether to block a merge."""
     all_findings = result.get("findings") or []
     shown = [finding for finding in all_findings if finding.get("shown", True)]
-    shown.sort(key=lambda finding: SEVERITY_ORDER.get(finding.get("severity"), len(SEVERITY_ORDER)))
+    shown.sort(key=lambda finding: SEVERITY_ORDER.get(_plain(finding.get("severity")), len(SEVERITY_ORDER)))
     suppressed = len(all_findings) - len(shown)
 
     if shown:
