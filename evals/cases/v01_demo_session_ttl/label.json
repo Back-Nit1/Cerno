@@ -1,0 +1,1 @@
+{"split":"heldout","kind":"violation","language":"js","needs_context":true,"expected":[{"rule_id":"CERNO-BEHAVIOR","path":"lib/session.mjs","line_start":3,"line_end":3,"why":"The demo's existing login contract keeps sessions valid for 24 hours; the shared-token TTL expires them after 30 minutes."}]}
