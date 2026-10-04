@@ -223,14 +223,14 @@ def run_benchmark(
         "arm": arm,
         "split": split,
         "runs": runs,
-        "model": settings.model if arm in {"diff", "rules"} else None,
+        "model": settings.model,
         "cases_commit": cases_commit(ROOT),
         "cases_digest": cases_digest(cases_dir),
         "created_at": datetime.now(UTC).isoformat(),
         "results": records,
     }
     out.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     destination = out / f"{arm}-{split}-{stamp}.json"
     destination.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return destination

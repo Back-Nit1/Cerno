@@ -42,11 +42,20 @@ def validate_label(case: Case) -> list[str]:
         if set(finding) != needed:
             errors.append(f"expected[{index}] keys must be exactly {sorted(needed)}")
             continue
+        invalid_strings = []
+        for field in ("rule_id", "path", "why"):
+            if not isinstance(finding[field], str) or not finding[field].strip():
+                errors.append(f"expected[{index}].{field} must be a non-empty string")
+                invalid_strings.append(field)
+        if invalid_strings:
+            continue
         start, end = finding["line_start"], finding["line_end"]
-        if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start:
+        if type(start) is not int or type(end) is not int or start < 1 or end < start:
             errors.append(f"expected[{index}] has an invalid line range")
             continue
         changed = modifications.get(finding["path"], set())
+        if finding["path"] not in modifications:
+            errors.append(f"expected[{index}] path is not present in change/")
         if not set(range(start, end + 1)).issubset(changed):
             errors.append(f"expected[{index}] range is not wholly inside changed lines")
     return errors
