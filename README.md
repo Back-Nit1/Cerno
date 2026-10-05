@@ -2,268 +2,324 @@
 
 > **Coding agents shouldn't grade their own homework.**
 
-Cerno is an autonomous verification agent for Claude Code. It tracks what a developer asked for, observes what Claude
-changed, and investigates the resulting codebase using Git, structural analysis, runtime checks, and targeted AI
-reasoning. Instead of trusting an AI coding agent to grade its own work, Cerno produces evidence-backed verdicts for
-every requirement.
+Cerno is a local-first verification tool for code that AI agents write. It does two things:
+
+1. **Reviews a diff before it merges** and reports only problems that could hurt production: a broken
+   caller, a weakened permission check, leaked data, a destructive migration, an unintended behaviour
+   change. Everything else is suppressed.
+2. **Tracks a Claude Code session** — what the developer asked for, what Claude changed, and whether the
+   evidence supports Claude's claim that the work is done.
+
+Both are built on one rule, enforced in code: a model's opinion alone is never proof. A finding is only
+`confirmed`, and a requirement only `VERIFIED`, when a test, a runtime check or a deterministic rule backs it.
 
 *Cerno* is Latin for "to discern, to decide."
 
-## How it works
+## Status
+
+Early, pre-release software (`0.1.0`, no tagged release, not on PyPI).
+
+- The deterministic parts — git analysis, symbol extraction, rules, the finding gate, reports — are covered by
+  the test suite and work without an API key.
+- The model-backed parts are tested against a scripted client. A benchmark exists in [`evals/`](evals/README.md),
+  but **no results have been published yet**, so this README makes no accuracy, cost or token-saving claims.
+- Symbol-level analysis covers JavaScript, TypeScript and Python.
+
+## Install
+
+Requires Python 3.12+, [uv](https://docs.astral.sh/uv/) and git. Node is needed only for the demo and the dashboard.
+
+```bash
+git clone https://github.com/N1tu-Mar/Cerno.git
+cd Cerno
+uv sync
+cp .env.example .env     # optional: set OPENAI_API_KEY and CERNO_MODEL
+uv run cerno --help
+```
+
+To use it in another repository, point uv at the clone:
+
+```bash
+uv run --project /path/to/Cerno cerno review --base main
+```
+
+Without `OPENAI_API_KEY`, every command still runs: deterministic evidence is collected and anything a model
+would have judged is reported as insufficient evidence instead of guessed.
+
+## Review a diff
+
+```bash
+cerno review --base main                      # your working tree against main
+cerno review --base main --head feature-x     # two committed revisions
+cerno review --staged --no-checks             # what you are about to commit; nothing is executed
+cerno review --pr 42 --format md              # a GitHub pull request, as Markdown (needs the gh CLI)
+```
+
+Exit code `0` means nothing to show, `1` means at least one shown finding, `2` means the review itself failed.
+
+### What gets reported
+
+Five built-in rules, each describing a concrete harm:
+
+| Rule | Harm | Severity |
+| --- | --- | --- |
+| `CERNO-CONTRACT` | An existing caller or published API contract is broken | high |
+| `CERNO-AUTHZ` | An authentication, permission or validation check is removed or weakened | critical |
+| `CERNO-DATA-EXPOSURE` | Secrets, personal data or another tenant's records reach logs, responses or files | critical |
+| `CERNO-DESTRUCTIVE` | An irreversible data or schema change | critical |
+| `CERNO-BEHAVIOR` | Existing behaviour changes outside the apparent purpose of the diff | high |
+
+Add your own, or switch built-ins off, in `.cerno.toml`:
+
+```toml
+[review]
+disable = ["CERNO-BEHAVIOR"]
+min_severity = "high"
+
+[[rule]]
+id = "PAY-001"
+text = "Refunds must never exceed the captured amount."
+severity = "critical"
+paths = ["src/payments/**"]
+```
+
+### What gets suppressed
+
+A finding is shown only when all four hold:
+
+1. the rule's verdict is `VIOLATED`;
+2. its severity is at or above `min_severity`;
+3. its location is inside lines the diff changed;
+4. it cites evidence beyond the diff itself — a caller, a test, a check result or a deterministic rule hit.
+
+Anything else stays in the JSON with `shown: false` and a reason, so precision can be measured. Style, naming,
+formatting and refactor suggestions are never reported. Silence on a clean diff is the correct output.
+
+Full reference: [`docs/review.md`](docs/review.md).
+
+## GitHub Action
+
+A report-only Action runs the same review on pull requests and writes the result to the job summary:
+
+```yaml
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: N1tu-Mar/Cerno@main
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+```
+
+It never executes code from the pull request, never comments, approves or merges, and needs only read access.
+Pull requests from forks run without secrets and report deterministic results only. Inputs, outputs and the
+security model are in [`docs/github-action.md`](docs/github-action.md).
+
+## Track a Claude Code session
+
+```bash
+cerno init       # merge hooks into .claude/settings.json (a backup is kept) and ignore .cerno/
+cerno doctor     # check the setup
+# ... use Claude Code as usual ...
+cerno status     # list captured sessions
+cerno analyze    # verify the latest session
+```
+
+Hooks record each prompt, each tool event and a git tree snapshot per prompt. They make no network calls and
+never block Claude Code; a hook failure exits 0. At `cerno analyze`:
 
 ```text
-Claude Code hooks ──> Capture (prompts, tool events; a git checkpoint per prompt + baseline/final)
+Claude Code hooks ──> prompts, tool events, a git checkpoint per prompt
                         │
                         ▼
-       Revision-aware Intent Compiler (OpenAI, strict schema, at `cerno analyze` — never in hooks)
-       classifies each prompt (new_task/refinement/correction/replacement/continuation/ambiguous)
-       and threads requirement provenance ─> Intent Contract (R1..Rn, active + superseded)
+       Intent compiler: prompts ─> requirements R1..Rn (active and superseded)
                         │
         ┌───────────────┴────────────────┐
         ▼                                ▼
- Change Analyzer                   Runtime Observer
- git trees + Tree-sitter           allowlisted test/build/lint/typecheck
- symbols + impact graph                  │
- + per-prompt diff segments              │
+ Change analysis                   Project checks
+ git trees + Tree-sitter symbols   the project's own test/build/lint commands
+ + per-prompt diff segments
         └───────────────┬────────────────┘
                         ▼
       Deterministic rules ──(settled)──────────────┐
                         │ (not settled)            │
                         ▼                          │
-      Evidence retrieval: rank + compact packet    │
-      (biased toward the requirement's originating  │
-      prompt segment, then the rest of the session) │
+      Ranked, bounded evidence packet              │
                         ▼                          │
-      Verification agent (OpenAI, read-only tools, │
-      bounded steps, cites evidence ids)           │
+      Verification agent (read-only tools,         │
+      bounded steps, must cite evidence ids)       │
                         ▼                          ▼
-      Verdict rules (VERIFIED needs test/runtime/rule evidence; only active requirements get one)
-                        ▼
-      Drift analysis · claim checks · usage ──> SQLite ──> FastAPI ──> React dashboard
+      Verdict rules ──> drift analysis · claim checks · usage ──> SQLite ──> API ──> dashboard
 ```
 
-Verdicts: **VERIFIED** (test, runtime, or deterministic proof), **LIKELY** (strong code evidence, no proof),
-**UNCERTAIN** (missing or conflicting evidence, or budget spent), **VIOLATED** (evidence contradicts it).
-A model's opinion alone can never produce VERIFIED; that rule is enforced in code.
+Each active requirement gets one verdict:
 
-### Multi-prompt sessions: revision-aware tracking
-
-A Claude Code session is rarely one prompt. Developers refine, correct, replace, and continue their own
-requests, and Cerno needs to tell those apart instead of joining every prompt into one flat blob of intent.
-
-Every meaningful `UserPromptSubmit` event is captured as a structured **prompt record** (stable id, session
-id, sequence number, timestamp, text, and a **git checkpoint**: the HEAD commit and worktree tree id at the
-moment the prompt was submitted, captured *before* Claude acts on it). Capturing the checkpoint is a git
-plumbing operation (`git write-tree` against a scratch index) — no model call, so hooks stay fast and never
-touch the network.
-
-At `cerno analyze` time — never in a hook — the **Intent Compiler** reads the ordered prompt timeline and
-classifies each prompt's relationship to the ones before it:
-
-| Classification | Meaning |
+| Verdict | Meaning |
 | --- | --- |
-| `new_task` | Starts an unrelated requirement |
-| `refinement` | Adds detail to an earlier requirement without contradicting it |
-| `correction` | Explicitly contradicts or withdraws part of an earlier requirement |
-| `replacement` | Discards an earlier task and starts over |
-| `continuation` | Keeps working on the same task, no new requirement |
-| `ambiguous` | The relationship can't be determined without guessing — flagged for developer review |
+| **VERIFIED** | Test, runtime or deterministic proof |
+| **LIKELY** | Strong code evidence, no proof |
+| **UNCERTAIN** | Missing or conflicting evidence, or the budget was spent |
+| **VIOLATED** | Evidence contradicts the requirement |
 
-For example:
+Cerno also flags changed files no requirement explains, and checks statements in Claude's final message
+("all tests pass", "no schema changes") against what the evidence shows.
+
+### Multi-prompt sessions
+
+Developers refine, correct and replace their own requests. Cerno classifies each prompt's relationship to the
+earlier ones — `new_task`, `refinement`, `correction`, `replacement`, `continuation` or `ambiguous` — and
+threads that through the requirements:
 
 > **P1:** "Use JWT reset tokens."
 > **P2:** "Actually, do not use JWT. Store opaque reset tokens in the database instead."
 
-P2 is classified `correction`. The JWT requirement stays in the contract for history, marked
-`active: false`, `superseded_by: P2` — it is visible in the dashboard and CLI but never receives a verdict
-and is excluded from verdict counts. The opaque-token requirement is `active: true`, `origin_prompt_id: P2`.
+P2 is a `correction`. The JWT requirement stays visible for history but is marked superseded and receives no
+verdict. A relationship Cerno cannot classify with a clear signal is reported `ambiguous` for the developer to
+resolve; it is never silently reconciled.
 
-> **P1:** "Add password reset."
-> **P2:** "Also make reset tokens expire after 30 minutes."
-
-P2 is classified `refinement`. Both requirements stay active; the expiry requirement records P2 as its
-origin. Cerno never silently reconciles a genuine conflict — anything it can't classify with a clear signal
-(a cue phrase like "actually"/"instead", or requirement keyword overlap) is reported `ambiguous` with a low
-confidence score and a note in `ambiguities`, not guessed.
-
-Without `OPENAI_API_KEY`, the same classification runs through a deterministic, conservative fallback
-(cue-phrase + keyword-overlap heuristics) and is labeled `fallback` — same behavior, no model call.
-
-**Diff segments and attribution.** Cerno reuses the same git tree snapshots hooks already capture (no
-repository duplication) to slice a session into segments: `baseline -> P1`, `P1 -> P2`, ..., `P(last) ->
-final`. Each changed file and symbol is mapped to the prompt whose segment it changed in — this is
-**temporal attribution**: correlation in time, not proof that the prompt *caused* the change. When a
-Claude Code tool event (`PostToolUse`) is recorded on the same path, the attribution is upgraded to
-`"direct"` evidence instead of `"temporal"`. The dashboard and API always report which kind it is.
-
-Sessions captured before this feature (`Session.prompts: list[str]` only, no per-prompt checkpoints) still
-analyze correctly: the timeline is synthesized on the fly as one unclassified, checkpoint-less prompt per
-entry.
-
-Inspect the timeline without starting the dashboard:
+Each changed file is attributed to the prompt whose segment it changed in. This is correlation in time, not
+proof of cause; a matching tool event on the same path upgrades the attribution from `temporal` to `direct`.
 
 ```bash
-uv run cerno timeline [session-id] [--json]
+cerno timeline [session-id] [--json]
 ```
 
-## Quick start
+A reproducible walkthrough is in [`DEMO.md`](DEMO.md): `uv run cerno demo`.
+
+## Repository history and diagnosis
+
+Cerno can index a repository's commit history, link commits back to the sessions and prompts that produced
+them, and rank suspect commits for a breakage between a known-good and a known-bad point:
 
 ```bash
-uv sync
-cp .env.example .env                 # set OPENAI_API_KEY (optional; deterministic analysis works without it)
-uv run cerno demo                    # reproducible scenario, see DEMO.md
-uv run cerno dashboard --repo ~/.cerno-demo
+cerno history index
+cerno history path src/auth/session.js
+cerno diagnose --good v1.2.0 --bad HEAD --file src/auth/session.js
 ```
 
-In your own repository:
+See [`docs/history.md`](docs/history.md).
 
-```bash
-uv run --project /path/to/Cerno cerno init      # merges hooks into .claude/settings.json (backup kept)
-uv run --project /path/to/Cerno cerno doctor
-# ... use Claude Code as usual ...
-uv run --project /path/to/Cerno cerno status
-uv run --project /path/to/Cerno cerno analyze   # latest session
-```
-
-## CLI
+## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `cerno init` | Install hooks, ignore `.cerno/` |
-| `cerno doctor` | Check git, hooks, key, Tree-sitter, DB, detected checks |
+| `cerno review` | Review a diff for production risk |
+| `cerno init` | Install Claude Code hooks, ignore `.cerno/` |
+| `cerno doctor` | Check git, hooks, key, Tree-sitter, database, detected checks |
 | `cerno status` | List captured sessions |
-| `cerno analyze [session-id] [--json]` | Run verification |
-| `cerno timeline [session-id] [--json]` | Inspect the structured prompt timeline (no dashboard needed) |
-| `cerno dashboard` | Serve API (+ `ui/dist`) on :8000 |
+| `cerno analyze [session-id] [--json]` | Verify a session |
+| `cerno timeline [session-id] [--json]` | Show the structured prompt timeline |
+| `cerno history index \| log \| path \| markers` | Index and query commit history |
+| `cerno diagnose` | Rank suspect commits for a breakage |
+| `cerno dashboard` | Serve the API and, if built, the web UI on `127.0.0.1:8000` |
 | `cerno demo` | Build and analyze the demo repository |
-| `cerno history index` | Incrementally index reachable git history |
-| `cerno history log [--first-parent]` | Show indexed commits |
-| `cerno history path <path>` | Commits touching a path, following renames |
-| `cerno history markers [--add <kind> --commit <ref>]` | Record/list good/bad/deployment/release/incident markers |
-| `cerno diagnose --good/--bad/--query/--file ...` | Rank suspect commits for a production breakage |
-| `cerno hook <event>` | Internal hook entrypoints (stdin JSON, fail-open) |
 
-See [`docs/history.md`](docs/history.md) for the repository-history layer and diagnosis workflow in depth.
-
-## API
-
-`GET /api/health` · `GET /api/sessions` · `GET /api/sessions/{id}` · `GET /api/sessions/{id}/requirements` ·
-`GET /api/sessions/{id}/requirements/{rid}` (trace + evidence) · `GET /api/sessions/{id}/timeline` (prompt
-records, classification, refines/supersedes, checkpoints, files/symbols changed afterward, requirement
-provenance) · `GET /api/sessions/{id}/segments` (per-prompt diff segments) · `GET /api/sessions/{id}/changes` ·
-`GET /api/sessions/{id}/evidence[/{eid}]` · `GET /api/sessions/{id}/checks` · `GET /api/sessions/{id}/claims` ·
-`GET /api/sessions/{id}/events` · `GET /api/sessions/{id}/usage` · `POST /api/sessions/{id}/analyze` ·
-`GET /api/sessions/{id}/stream` (SSE progress). Response shapes follow `ui/src/types.ts`, with extra fields added.
-`GET /api/sessions/{id}` also embeds `prompt_timeline` for convenience.
-
-Repository history (see `docs/history.md`): `GET /api/history/status` · `GET /api/history/commits` (paginated,
-`?before_seq=&limit=&first_parent=`) · `GET /api/history/commits/{hash}` · `GET /api/history/path?path=` ·
-`GET /api/history/symbol?path=&name=` · `GET /api/history/sessions/{id}[/file?path=]` ·
-`GET/POST /api/history/markers` · `POST /api/history/diagnose` · `GET /api/history/diagnose/{id}`.
+The dashboard UI is a separate build: `cd ui && npm ci && npm run build`, then `cerno dashboard`. Its HTTP API
+is listed in [`src/cerno/api/app.py`](src/cerno/api/app.py) and [`src/cerno/api/history.py`](src/cerno/api/history.py).
 
 ## Configuration
 
-See `.env.example`: `CERNO_MODEL` (default `gpt-5.6-luna`), `CERNO_MAX_TOOL_STEPS`, `CERNO_MAX_GRAPH_DEPTH`,
-`CERNO_MAX_SNIPPET_LINES`, `CERNO_MAX_SEARCH_RESULTS`, `CERNO_CHECK_TIMEOUT`, `CERNO_DB_PATH`.
+Set through environment variables or a `.env` file in the repository root; see [`.env.example`](.env.example).
 
-## Privacy and safety
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | unset | Enables model-backed verification |
+| `CERNO_MODEL` | see `.env.example` | Model id; set one your account can use |
+| `CERNO_MAX_TOOL_STEPS` | 8 | Agent turns per requirement or rule |
+| `CERNO_MAX_MODEL_CALLS` | 200 | Model calls per run |
+| `CERNO_MAX_TOTAL_TOKENS` | 3000000 | Input plus output tokens per run |
+| `CERNO_MAX_CALLS_PER_MINUTE` | 60 | Client-side rate limit |
+| `CERNO_CHECK_TIMEOUT` | 300 | Seconds per project check |
+| `CERNO_PRICE_INPUT_PER_MTOK`, `CERNO_PRICE_OUTPUT_PER_MTOK` | unset | Your prices; cost is reported only when set |
+| `CERNO_DB_PATH` | `.cerno/cerno.db` | Local state |
 
-- Local-first. Only small, redacted evidence snippets are sent to the OpenAI Responses API, never the whole repository.
-- `.env`, key/credential files, `.gitignore`d paths, and `.cernoignore` patterns are excluded.
-- The model has no shell and no write access. Project checks come only from `package.json` scripts or `pyproject.toml`.
-- OBSERVE mode: Cerno never blocks Claude Code, and hook failures exit 0.
+A run that reaches a budget stops with an error. Every numeric setting has a hard ceiling in code.
 
-## Layout
+## Privacy and security
+
+- **What leaves your machine.** Only the evidence selected for a requirement or rule — ranked diff hunks,
+  symbol source, search hits, check output — is sent to the OpenAI Responses API, with `store=False`. The whole
+  repository is never sent.
+- **What is excluded.** `.env`, key and credential files, `.gitignore`d paths and anything in `.cernoignore`.
+  Text sent to the model is pattern-redacted for common secret formats; this is best-effort.
+- **What the model can do.** Read through a fixed set of repository-scoped tools. It has no shell and no write
+  access.
+- **What Cerno executes.** Only the project's own test, build, lint and typecheck commands, with credential
+  variables removed from their environment. `--no-checks` disables them, and they are skipped when reviewing
+  a revision other than your working tree.
+- **The dashboard has no authentication.** It binds to loopback and refuses cross-origin writes; do not expose
+  it to a network.
+
+The threat model, the known limits and how to report a vulnerability are in [`SECURITY.md`](SECURITY.md).
+
+## Evaluation
+
+[`evals/`](evals/README.md) holds 24 labelled changes — 8 correct, 10 violations, 6 where the honest answer is
+insufficient evidence — with a regression test behind every seeded defect. It compares three arms on the same
+model: a diff-only review, a diff-plus-rules review, and `cerno review`.
+
+```bash
+python -m evals.check_fixtures                                      # validate the cases; no model, no network
+python -m evals.run --arm cerno --split dev --runs 3 --out evals/results/ --cerno-cmd cerno
+python -m evals.report evals/results/
+```
+
+The cases are synthetic, small, and written by this project's authors; the sample is too small for narrow
+confidence intervals. Results will be published here once the held-out split has been run.
+
+## Development
+
+```bash
+uv run pytest -q          # backend, capture, analysis, review, reports, evals fixtures
+uv run ruff check .
+cd ui && npm ci && npm test && npm run lint
+```
+
+The Python suite needs Node on the path: the demo fixture runs `node --test`. Model calls are scripted, so no
+API key is required. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ```text
 src/cerno/  cli.py config.py models.py privacy.py pipeline.py demo.py
-            capture/ (hooks, snapshots, timeline, transcript)   intent/compiler.py
-            analysis/ (git, tree_sitter, symbols, graph, retrieval, segments, history)
-            evidence/store.py   verification/ (context, deterministic, runtime, tools, agent, verdict, diagnosis)
-            llm/openai.py       storage/sqlite.py    api/ (app.py, history.py)
+            capture/       hooks, snapshots, prompt timeline, transcript
+            intent/        prompts -> requirements
+            analysis/      git, Tree-sitter symbols, call graph, retrieval, segments, history
+            verification/  rules, project checks, agent, tools, verdict rules, diagnosis
+            review/        diff review: revisions, rules file, engine and gate
+            report/        Markdown rendering        github/  pull-request resolution
+            llm/ storage/ evidence/ api/
 ui/         React + Vite dashboard
-tests/      pytest suite (API mocked for the agent loop)
-examples/demo-auth-app/
-docs/       history.md (repository-history layer + diagnosis workflow)
-```
-
-## Development and tests
-
-The repository has two test suites:
-
-```bash
-# Backend, capture pipeline, analysis, verification, and API
-uv run pytest
-
-# Dashboard utilities
-cd ui
-npm ci
-npm test
-```
-
-The Python suite covers the per-session capture/verification pipeline, revision-aware prompt timelines, and the
-repository-history layer described in `docs/history.md`:
-
-- `tests/test_capture_git.py` checks Git snapshots and diffs, dirty-work attribution, hook event persistence and
-  normalization, fail-open handling of invalid hook input, and non-destructive/idempotent hook installation.
-- `tests/test_analysis.py` checks JavaScript/TypeScript and Python symbol extraction, changed-symbol classification,
-  import/caller relationships, bounded graph traversal, and ranked evidence retrieval with `.cernoignore` filtering.
-- `tests/test_intent_rules.py` checks model-produced and fallback intent contracts, the requirement cap, malformed model
-  output, evidence requirements for verdicts, and deterministic rules for dependencies, schema tables, and tests.
-- `tests/test_agent_api.py` runs the demo analysis once per test session, then checks deterministic results, the mocked
-  verification-agent tool loop and cache, budget/malformed-output fallbacks, the rule preventing opinion-only
-  `VERIFIED` verdicts, and the FastAPI response contract. OpenAI calls are scripted with `FakeClient`, so the suite does
-  not require an API key.
-- `tests/test_prompt_timeline.py` checks revision-aware, multi-prompt classification (refinement, correction,
-  replacement, continuation, unrelated new_task, and ambiguous-without-OpenAI, both deterministic and via a scripted
-  model response), git checkpoints surviving commits and dirty state between prompts, file/symbol attribution by
-  segment, direct-vs-temporal attribution confidence, backward compatibility with `prompts`-only sessions, superseded
-  requirements being excluded from verdict counts, timeline/segments API serialization, and a structural proof that
-  hooks never import the OpenAI SDK.
-- `tests/test_history.py` checks git indexing (linear/merge/root commits, renames, deletions, binary files,
-  schema/manifest flags), incremental re-indexing, interrupted-indexing recovery, shallow clones, rewritten/diverged
-  history, session- and prompt-to-commit linkage, developer-only markers, and backward-compatible DB migration.
-- `tests/test_diagnosis.py` checks deterministic suspect ranking without OpenAI, `--good`/`--bad` range narrowing, a
-  fake-OpenAI narrative pass (`FakeClient`, no live API calls), that a model-suggested ref outside the candidate set
-  is dropped rather than trusted, and secret redaction in the evidence packet.
-- `tests/test_history_api.py` checks commit-timeline pagination, commit/path/marker/diagnose endpoints, and 404s.
-- `tests/test_regression_scenario.py` is the realistic example from `docs/history.md`: two sessions, a known-good
-  release, a later regression, and a diagnosis that ranks and links the suspect commit back to its session and prompt.
-
-The UI suite covers analysis-progress stage states, verdict-status counting, prompt-classification labeling, and the
-repository-history dashboard page against a mocked `fetch`. The shared `demo` pytest fixture invokes the demo app's
-real `node --test` command.
-
-Useful additional checks are:
-
-```bash
-uv run ruff check .
-cd ui && npm run lint && npm run build
+evals/      benchmark cases, runner and report
+docs/       review.md, github-action.md, history.md
 ```
 
 ## Known limitations
 
-- The call graph is name-based and approximate. There is no type resolution.
-- The whole test suite runs; per-target test selection is not derived.
-- Checks run on the working tree at analysis time.
-- JavaScript/TypeScript and Python only.
-- **Prompt-segment attribution is temporal, not causal.** A file changing between prompt N's checkpoint and
-  prompt N+1's is evidence that it was likely a response to prompt N, not proof — a developer editing files
-  by hand between prompts, or Claude batching unrelated work, looks the same in the git tree. A matching
-  `PostToolUse` hook event on the same path upgrades the attribution from `"temporal"` to `"direct"`, but
-  even direct evidence only shows Claude touched the file, not why. Treat both as investigative leads.
-- The deterministic (no-`OPENAI_API_KEY`) prompt classifier is a conservative cue-phrase and keyword-overlap
-  heuristic. It reports `ambiguous` rather than guessing whenever it isn't confident, which means real
-  refinements/corrections can also land as `ambiguous` without a model call to disambiguate them.
-- Repository history is indexed from `HEAD` only (not every branch/tag); incremental indexing after a
-  force-push/rebase that rewrites already-indexed commits may briefly re-walk more than the new tip alone (see
-  `docs/history.md#known-limitations`).
-- Per-commit symbol history re-parses the repository tree for each commit in the query, bounded to the last 20
-  commits touching a path by default — fine for interactive queries, not for scanning whole-history symbol churn.
+- The call graph is name-based and approximate; there is no type resolution.
+- The whole test suite runs; tests are not selected per change.
+- Project checks run against the working tree, not against a stored snapshot.
+- Prompt-to-change attribution is temporal, not causal.
+- Without an API key, prompt classification falls back to a conservative heuristic that reports `ambiguous`
+  whenever it is unsure.
+- A review sees two trees. It does not read commit messages or the pull-request description.
+- Repository history is indexed from `HEAD` only.
 
 ## Roadmap
 
-GUARD mode (warn on risky tool calls) · ENFORCE mode (block explicit prohibitions) · targeted test selection ·
-richer claim extraction from transcripts · more languages.
+Posting findings as pull-request comments with tracking across new commits · preparing fixes on a separate
+branch · targeted test selection · more languages.
 
-<!-- Screenshots: docs/screenshots/overview.png, docs/screenshots/trace.png (placeholders) -->
+## License
+
+No license has been chosen yet. Until a `LICENSE` file is added, the code is published for reading and
+evaluation only and normal copyright applies.
