@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "openai>=1.58",
-    "pydantic>=2.7",
+    "pydantic>=2.14.0",
     "tree-sitter>=0.23",
     "tree-sitter-javascript>=0.23",
     "tree-sitter-typescript>=0.23",
